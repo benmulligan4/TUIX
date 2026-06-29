@@ -1,0 +1,7 @@
+{
+  "CharacterSet": {
+    "label": "Character Set",
+    "type": "internal",
+    "module": "applications::character_set"
+  }
+}

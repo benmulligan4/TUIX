@@ -1,0 +1,10 @@
+{
+  "Dashboard-1": {
+    "label": "Dashboard 1 — Clock & Date",
+    "module": "src.dashboards.custom.Dashboard-1"
+  },
+  "Dashboard-2": {
+    "label": "Dashboard 2 — System Stats",
+    "module": "src.dashboards.custom.Dashboard-2"
+  }
+}

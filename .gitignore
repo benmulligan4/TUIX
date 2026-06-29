@@ -1,0 +1,9 @@
+/target
+logs/
+.DS_Store
+
+.idea
+.venv
+
+temp
+library
