@@ -24,11 +24,58 @@ use super::models::{Action, AppStatus, FocusTarget, TuixState};
 use super::process_manager;
 use super::registry;
 
-use crate::applications::character_set::{AppAction, CharacterSetApp};
+use crate::applications::default::character_set::{AppAction, CharacterSetApp};
+use crate::applications::default::text_editor::{TextEditorAction, TextEditorApp};
 use crate::dashboards::{dashboard_1, dashboard_2};
 use crate::dashboards::installed_runner::InstalledDashboard;
 use crate::settings;
 use crate::touchscreen;
+
+// ---------------------------------------------------------------------------
+// Internal app wrapper — supports multiple built-in app types
+// ---------------------------------------------------------------------------
+
+enum InternalApp {
+    CharacterSet(CharacterSetApp),
+    TextEditor(TextEditorApp),
+}
+
+impl InternalApp {
+    fn render(&mut self, frame: &mut Frame, area: Rect, border_style: Style) {
+        match self {
+            InternalApp::CharacterSet(app) => app.render(frame, area, border_style),
+            InternalApp::TextEditor(app) => app.render(frame, area, border_style),
+        }
+    }
+
+    fn handle_key(&mut self, code: &str) -> bool {
+        // Returns true if the app wants to close
+        match self {
+            InternalApp::CharacterSet(app) => {
+                matches!(app.handle_key(code), Some(AppAction::Back))
+            }
+            InternalApp::TextEditor(app) => {
+                matches!(app.handle_key(code), Some(TextEditorAction::Back))
+            }
+        }
+    }
+
+    fn stop(&mut self) {
+        match self {
+            InternalApp::CharacterSet(app) => app.stop(),
+            InternalApp::TextEditor(app) => app.stop(),
+        }
+    }
+
+    /// Returns true if this app uses the OSK and has it active,
+    /// meaning WASD should NOT be mapped to navigation.
+    fn wants_raw_wasd(&self) -> bool {
+        match self {
+            InternalApp::TextEditor(app) => app.keyboard_active(),
+            _ => false,
+        }
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Navbar definition
@@ -343,7 +390,7 @@ fn render_main(
     frame: &mut Frame,
     area: Rect,
     state: &TuixState,
-    active_internal_app: &mut Option<CharacterSetApp>,
+    active_internal_app: &mut Option<InternalApp>,
     active_installed_dash: &mut Option<InstalledDashboard>,
 ) {
     let focused = state.focus == FocusTarget::Main;
@@ -418,7 +465,7 @@ fn handle_navbar_key(
     nav_items: &[NavItem],
     apps_registry: &std::collections::HashMap<String, Value>,
     dashboards_registry: &std::collections::HashMap<String, Value>,
-    active_internal_app: &mut Option<CharacterSetApp>,
+    active_internal_app: &mut Option<InternalApp>,
     active_installed_dash: &mut Option<InstalledDashboard>,
 ) -> NavResult {
     if action == Action::Tab {
@@ -516,7 +563,7 @@ fn execute_action(
     state: &mut TuixState,
     apps_registry: &std::collections::HashMap<String, Value>,
     dashboards_registry: &std::collections::HashMap<String, Value>,
-    active_internal_app: &mut Option<CharacterSetApp>,
+    active_internal_app: &mut Option<InternalApp>,
     active_installed_dash: &mut Option<InstalledDashboard>,
 ) -> NavResult {
     state.nav_expanded = false;
@@ -579,9 +626,19 @@ fn execute_action(
             .unwrap_or("external");
 
         if app_type == "internal" {
-            let mut app = CharacterSetApp::new();
-            app.start();
-            *active_internal_app = Some(app);
+            let internal = match name {
+                "TextEditor" => {
+                    let mut app = TextEditorApp::new();
+                    app.start();
+                    InternalApp::TextEditor(app)
+                }
+                _ => {
+                    let mut app = CharacterSetApp::new();
+                    app.start();
+                    InternalApp::CharacterSet(app)
+                }
+            };
+            *active_internal_app = Some(internal);
             state.active_app = Some(name.to_string());
             state.active_page = None;
             state.focus = FocusTarget::Main;
@@ -626,7 +683,7 @@ enum MainResult {
 fn handle_main_key(
     action: Action,
     state: &mut TuixState,
-    active_internal_app: &mut Option<CharacterSetApp>,
+    active_internal_app: &mut Option<InternalApp>,
     active_installed_dash: &mut Option<InstalledDashboard>,
 ) -> MainResult {
     if action == Action::Quit {
@@ -636,6 +693,22 @@ fn handle_main_key(
     if action == Action::Tab {
         state.focus = FocusTarget::Navbar;
         return MainResult::None;
+    }
+
+    // If an internal app has its OSK active, forward ALL mapped keys to it
+    // (including Back/Q which normally closes the app — the OSK handles
+    // Q as "close keyboard", not "close app").
+    if let Some(app) = active_internal_app {
+        if app.wants_raw_wasd() {
+            if let Some(key_name) = action_to_key_name(action) {
+                if app.handle_key(key_name) {
+                    app.stop();
+                    state.active_app = None;
+                    *active_internal_app = None;
+                }
+            }
+            return MainResult::None;
+        }
     }
 
     if action == Action::Back {
@@ -694,13 +767,10 @@ fn handle_main_key(
     // Internal app key forwarding
     if let Some(app) = active_internal_app {
         if let Some(key_name) = action_to_key_name(action) {
-            match app.handle_key(key_name) {
-                Some(AppAction::Back) => {
-                    app.stop();
-                    state.active_app = None;
-                    *active_internal_app = None;
-                }
-                None => {}
+            if app.handle_key(key_name) {
+                app.stop();
+                state.active_app = None;
+                *active_internal_app = None;
             }
         }
     }
@@ -738,7 +808,7 @@ pub fn main() {
 
     let mut state = TuixState::new(default_dashboard);
     let nav_items = build_nav_items(&dashboards, &apps_registry);
-    let mut active_internal_app: Option<CharacterSetApp> = None;
+    let mut active_internal_app: Option<InternalApp> = None;
     let mut active_installed_dash: Option<InstalledDashboard> = None;
 
     // Setup terminal

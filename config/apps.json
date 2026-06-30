@@ -2,6 +2,11 @@
   "CharacterSet": {
     "label": "Character Set",
     "type": "internal",
-    "module": "applications::character_set"
+    "module": "applications::default::character_set"
+  },
+  "TextEditor": {
+    "label": "Text Editor",
+    "type": "internal",
+    "module": "applications::default::text_editor"
   }
 }
