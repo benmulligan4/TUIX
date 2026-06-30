@@ -7,3 +7,6 @@ logs/
 
 temp
 library
+
+src/applications/installed
+src/dashboards/installed
