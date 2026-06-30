@@ -786,6 +786,30 @@ pub fn main() {
             _ => continue,
         };
 
+        // When an installed dashboard is active and main is focused,
+        // forward raw key events directly to the PTY subprocess.
+        // Only Esc (quit) and Tab (switch to navbar) are reserved by TUIX.
+        if state.focus == FocusTarget::Main {
+            if let Some(dash) = &mut active_installed_dash {
+                if state.active_dashboard == dash.name
+                    && state.active_page.is_none()
+                    && state.active_app.is_none()
+                {
+                    match key_event.code {
+                        crossterm::event::KeyCode::Esc => break, // Quit TUIX
+                        crossterm::event::KeyCode::Tab => {
+                            state.focus = FocusTarget::Navbar;
+                            continue;
+                        }
+                        _ => {
+                            dash.send_key_event(key_event);
+                            continue;
+                        }
+                    }
+                }
+            }
+        }
+
         let action = match map_key(key_event) {
             Some(a) => a,
             None => continue,

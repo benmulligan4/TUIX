@@ -8,6 +8,7 @@ use std::io::{Read, Write};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use ratatui::{
     layout::{Alignment, Margin, Rect},
@@ -203,11 +204,65 @@ impl InstalledDashboard {
             Action::Right => b"\x1b[C",
             Action::Left => b"\x1b[D",
             Action::Enter => b"\r",
-            Action::Back => b"q", // Send 'q' which sigye uses to quit
+            Action::Back => b"q",
             Action::Tab => b"\t",
-            Action::Quit => b"\x1b", // ESC
+            Action::Quit => b"\x1b",
         };
         let _ = self.writer.write_all(bytes);
+    }
+
+    /// Forward a raw crossterm KeyEvent directly to the PTY.
+    /// This allows all keypresses (characters, function keys, etc.) to reach
+    /// the third-party app running inside the container.
+    pub fn send_key_event(&mut self, key: KeyEvent) {
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+
+        let bytes: Vec<u8> = match key.code {
+            KeyCode::Char(c) => {
+                if ctrl {
+                    // Ctrl+A = 0x01, Ctrl+B = 0x02, etc.
+                    let ctrl_byte = (c as u8).wrapping_sub(b'a').wrapping_add(1);
+                    vec![ctrl_byte]
+                } else {
+                    let mut buf = [0u8; 4];
+                    let s = c.encode_utf8(&mut buf);
+                    s.as_bytes().to_vec()
+                }
+            }
+            KeyCode::Enter => vec![b'\r'],
+            KeyCode::Backspace => vec![0x7f],
+            KeyCode::Tab => vec![b'\t'],
+            KeyCode::BackTab => b"\x1b[Z".to_vec(),
+            KeyCode::Esc => vec![0x1b],
+            KeyCode::Up => b"\x1b[A".to_vec(),
+            KeyCode::Down => b"\x1b[B".to_vec(),
+            KeyCode::Right => b"\x1b[C".to_vec(),
+            KeyCode::Left => b"\x1b[D".to_vec(),
+            KeyCode::Home => b"\x1b[H".to_vec(),
+            KeyCode::End => b"\x1b[F".to_vec(),
+            KeyCode::PageUp => b"\x1b[5~".to_vec(),
+            KeyCode::PageDown => b"\x1b[6~".to_vec(),
+            KeyCode::Insert => b"\x1b[2~".to_vec(),
+            KeyCode::Delete => b"\x1b[3~".to_vec(),
+            KeyCode::F(n) => match n {
+                1 => b"\x1bOP".to_vec(),
+                2 => b"\x1bOQ".to_vec(),
+                3 => b"\x1bOR".to_vec(),
+                4 => b"\x1bOS".to_vec(),
+                5 => b"\x1b[15~".to_vec(),
+                6 => b"\x1b[17~".to_vec(),
+                7 => b"\x1b[18~".to_vec(),
+                8 => b"\x1b[19~".to_vec(),
+                9 => b"\x1b[20~".to_vec(),
+                10 => b"\x1b[21~".to_vec(),
+                11 => b"\x1b[23~".to_vec(),
+                12 => b"\x1b[24~".to_vec(),
+                _ => return,
+            },
+            _ => return,
+        };
+
+        let _ = self.writer.write_all(&bytes);
     }
 
     /// Send a raw character to the PTY (for passthrough keys).
