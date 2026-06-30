@@ -33,13 +33,13 @@ impl OskKey {
     fn label(&self, shifted: bool) -> &str {
         match self {
             OskKey::Char(_) => "", // handled separately
-            OskKey::Backspace => "⌫ Bksp",
-            OskKey::Space => "      Space      ",
-            OskKey::Enter => "Enter",
-            OskKey::CursorLeft => "←",
-            OskKey::CursorRight => "→",
+            OskKey::Backspace => "Bksp ⌫",
+            OskKey::Space => "Space",
+            OskKey::Enter => "Enter ↵",
+            OskKey::CursorLeft => " ◂ ",
+            OskKey::CursorRight => " ▸ ",
             OskKey::Shift => if shifted { "⇧ SHIFT" } else { "⇧ Shift" },
-            OskKey::Tab => "Tab",
+            OskKey::Tab => "Tab ⇥",
         }
     }
 
@@ -47,12 +47,12 @@ impl OskKey {
     fn width(&self) -> u16 {
         match self {
             OskKey::Char(_) => 5,
-            OskKey::Backspace => 9,
-            OskKey::Space => 19,
-            OskKey::Enter => 7,
-            OskKey::CursorLeft | OskKey::CursorRight => 4,
-            OskKey::Shift => 9,
-            OskKey::Tab => 5,
+            OskKey::Backspace => 10,
+            OskKey::Space => 25,
+            OskKey::Enter => 10,
+            OskKey::CursorLeft | OskKey::CursorRight => 5,
+            OskKey::Shift => 10,
+            OskKey::Tab => 8,
         }
     }
 }
@@ -243,7 +243,7 @@ impl OnScreenKeyboard {
 
         let block = Block::default()
             .borders(Borders::ALL)
-            .title(" On-Screen Keyboard — Q to close ")
+            .title(" Keyboard ─ Q close ")
             .title_alignment(Alignment::Right)
             .style(Style::default().fg(Color::DarkGray));
         frame.render_widget(block, area);
@@ -262,11 +262,15 @@ impl OnScreenKeyboard {
             .constraints(constraints)
             .split(inner);
 
+        // Staggered indent per row (like a real keyboard)
+        let row_indents = [" ", "  ", "   ", "    ", "  "];
+
         for (r, row_keys) in self.rows.iter().enumerate() {
             let mut spans: Vec<Span> = Vec::new();
 
-            // Center the row with some padding
-            spans.push(Span::raw(" "));
+            // Row indent
+            let indent = row_indents.get(r).unwrap_or(&" ");
+            spans.push(Span::raw(*indent));
 
             for (c, key) in row_keys.iter().enumerate() {
                 let selected = r == self.cursor_row && c == self.cursor_col;
@@ -280,20 +284,39 @@ impl OnScreenKeyboard {
                         };
                         format!(" {} ", display_ch)
                     }
-                    other => format!(" {} ", other.label(self.shifted)),
+                    other => {
+                        let w = other.width() as usize;
+                        let text = other.label(self.shifted);
+                        let text_len = text.chars().count();
+                        let total_pad = w.saturating_sub(text_len);
+                        let left_pad = total_pad / 2;
+                        let right_pad = total_pad - left_pad;
+                        format!(
+                            "{}{}{}",
+                            " ".repeat(left_pad),
+                            text,
+                            " ".repeat(right_pad),
+                        )
+                    }
                 };
 
-                let style = if selected {
-                    Style::default()
-                        .fg(Color::Black)
-                        .bg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD)
+                let (fg, bg) = if selected {
+                    (Color::Black, Color::Cyan)
                 } else {
-                    Style::default().fg(Color::White).bg(Color::DarkGray)
+                    match key {
+                        OskKey::Char(_) => (Color::White, Color::Indexed(236)),
+                        _ => (Color::Yellow, Color::Indexed(236)),
+                    }
                 };
+
+                let mut style = Style::default().fg(fg).bg(bg);
+                if selected {
+                    style = style.add_modifier(Modifier::BOLD);
+                }
 
                 spans.push(Span::styled(label, style));
-                spans.push(Span::raw(" ")); // gap between keys
+                // Gap between keys
+                spans.push(Span::raw(" "));
             }
 
             let line = Line::from(spans);
