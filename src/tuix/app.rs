@@ -26,6 +26,7 @@ use super::registry;
 
 use crate::applications::character_set::{AppAction, CharacterSetApp};
 use crate::dashboards::{dashboard_1, dashboard_2};
+use crate::dashboards::installed_runner::InstalledDashboard;
 use crate::settings;
 use crate::touchscreen;
 
@@ -343,6 +344,7 @@ fn render_main(
     area: Rect,
     state: &TuixState,
     active_internal_app: &mut Option<CharacterSetApp>,
+    active_installed_dash: &mut Option<InstalledDashboard>,
 ) {
     let focused = state.focus == FocusTarget::Main;
     let border_style = if focused {
@@ -364,25 +366,38 @@ fn render_main(
         } else if let Some(app_name) = &state.active_app {
             render_app_log(frame, area, app_name, border_style);
         }
+    } else if let Some(dash) = active_installed_dash {
+        if state.active_dashboard == dash.name {
+            dash.render(frame, area, border_style);
+        } else {
+            // Dashboard changed away from installed one
+            match state.active_dashboard.as_str() {
+                "Dashboard-1" => dashboard_1::render(frame, area, border_style),
+                "Dashboard-2" => dashboard_2::render(frame, area, border_style),
+                _ => render_no_dashboard(frame, area, border_style),
+            }
+        }
     } else {
         match state.active_dashboard.as_str() {
             "Dashboard-1" => dashboard_1::render(frame, area, border_style),
             "Dashboard-2" => dashboard_2::render(frame, area, border_style),
-            _ => {
-                let block = Block::default()
-                    .borders(Borders::ALL)
-                    .title(" TUIX ")
-                    .style(border_style);
-                frame.render_widget(block, area);
-                let inner = area.inner(Margin { horizontal: 1, vertical: 1 });
-                frame.render_widget(
-                    Paragraph::new(Text::raw("\n  No dashboard loaded."))
-                        .style(Style::default().fg(Color::DarkGray)),
-                    inner,
-                );
-            }
+            _ => render_no_dashboard(frame, area, border_style),
         }
     }
+}
+
+fn render_no_dashboard(frame: &mut Frame, area: Rect, border_style: Style) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" TUIX ")
+        .style(border_style);
+    frame.render_widget(block, area);
+    let inner = area.inner(Margin { horizontal: 1, vertical: 1 });
+    frame.render_widget(
+        Paragraph::new(Text::raw("\n  No dashboard loaded."))
+            .style(Style::default().fg(Color::DarkGray)),
+        inner,
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -402,7 +417,9 @@ fn handle_navbar_key(
     state: &mut TuixState,
     nav_items: &[NavItem],
     apps_registry: &std::collections::HashMap<String, Value>,
+    dashboards_registry: &std::collections::HashMap<String, Value>,
     active_internal_app: &mut Option<CharacterSetApp>,
+    active_installed_dash: &mut Option<InstalledDashboard>,
 ) -> NavResult {
     if action == Action::Tab {
         state.focus = FocusTarget::Main;
@@ -444,7 +461,9 @@ fn handle_navbar_key(
                             &data,
                             state,
                             apps_registry,
+                            dashboards_registry,
                             active_internal_app,
+                            active_installed_dash,
                         );
                     }
                 }
@@ -479,7 +498,9 @@ fn handle_navbar_key(
                         &data,
                         state,
                         apps_registry,
+                        dashboards_registry,
                         active_internal_app,
+                        active_installed_dash,
                     );
                 }
             }
@@ -494,7 +515,9 @@ fn execute_action(
     data: &str,
     state: &mut TuixState,
     apps_registry: &std::collections::HashMap<String, Value>,
+    dashboards_registry: &std::collections::HashMap<String, Value>,
     active_internal_app: &mut Option<CharacterSetApp>,
+    active_installed_dash: &mut Option<InstalledDashboard>,
 ) -> NavResult {
     state.nav_expanded = false;
     state.dropdown_cursor = 0;
@@ -504,6 +527,50 @@ fn execute_action(
         state.active_page = None;
         state.active_app = None;
         state.focus = FocusTarget::Main;
+
+        // Check if this is an installed (third-party) dashboard
+        if let Some(meta) = dashboards_registry.get(name) {
+            let dash_type = meta.get("type").and_then(|t| t.as_str()).unwrap_or("");
+            if dash_type == "installed" {
+                let mut cmd: Vec<String> = meta
+                    .get("cmd")
+                    .and_then(|c| c.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
+                // Try local binary path first if the command isn't found in PATH
+                if let Some(local_bin) = meta.get("local_bin").and_then(|v| v.as_str()) {
+                    let local_path = std::path::Path::new(local_bin);
+                    if local_path.exists() {
+                        cmd = vec![local_bin.to_string()];
+                    }
+                }
+
+                let label = meta
+                    .get("label")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(name)
+                    .to_string();
+
+                // Kill previous installed dashboard if any
+                *active_installed_dash = None;
+
+                // Spawn new one (use default size, will resize on first render)
+                if !cmd.is_empty() {
+                    *active_installed_dash =
+                        InstalledDashboard::start(name, &label, &cmd, 80, 24);
+                }
+            } else {
+                // Switching to a built-in dashboard; drop any installed one
+                *active_installed_dash = None;
+            }
+        } else {
+            *active_installed_dash = None;
+        }
     } else if let Some(name) = data.strip_prefix("app:") {
         let meta = apps_registry.get(name);
         let app_type = meta
@@ -560,6 +627,7 @@ fn handle_main_key(
     action: Action,
     state: &mut TuixState,
     active_internal_app: &mut Option<CharacterSetApp>,
+    active_installed_dash: &mut Option<InstalledDashboard>,
 ) -> MainResult {
     if action == Action::Quit {
         return MainResult::Quit;
@@ -580,8 +648,20 @@ fn handle_main_key(
             }
             state.active_app = None;
             *active_internal_app = None;
+        } else if active_installed_dash.is_some() {
+            // Close the installed dashboard and go back to default
+            *active_installed_dash = None;
+            state.active_dashboard = "Dashboard-1".to_string();
         }
         return MainResult::None;
+    }
+
+    // Forward keys to installed dashboard if active
+    if let Some(dash) = active_installed_dash {
+        if state.active_dashboard == dash.name && state.active_page.is_none() && state.active_app.is_none() {
+            dash.send_key(action);
+            return MainResult::None;
+        }
     }
 
     // System page navigation
@@ -659,6 +739,7 @@ pub fn main() {
     let mut state = TuixState::new(default_dashboard);
     let nav_items = build_nav_items(&dashboards, &apps_registry);
     let mut active_internal_app: Option<CharacterSetApp> = None;
+    let mut active_installed_dash: Option<InstalledDashboard> = None;
 
     // Setup terminal
     enable_raw_mode().expect("Failed to enable raw mode");
@@ -677,7 +758,7 @@ pub fn main() {
                     .split(frame.area());
 
                 // 1. Draw main container
-                render_main(frame, rows[1], &state, &mut active_internal_app);
+                render_main(frame, rows[1], &state, &mut active_internal_app, &mut active_installed_dash);
 
                 // 2. Draw navbar label row
                 render_navbar(frame, rows[0], &nav_items, &state);
@@ -705,6 +786,30 @@ pub fn main() {
             _ => continue,
         };
 
+        // When an installed dashboard is active and main is focused,
+        // forward raw key events directly to the PTY subprocess.
+        // Only Esc (quit) and Tab (switch to navbar) are reserved by TUIX.
+        if state.focus == FocusTarget::Main {
+            if let Some(dash) = &mut active_installed_dash {
+                if state.active_dashboard == dash.name
+                    && state.active_page.is_none()
+                    && state.active_app.is_none()
+                {
+                    match key_event.code {
+                        crossterm::event::KeyCode::Esc => break, // Quit TUIX
+                        crossterm::event::KeyCode::Tab => {
+                            state.focus = FocusTarget::Navbar;
+                            continue;
+                        }
+                        _ => {
+                            dash.send_key_event(key_event);
+                            continue;
+                        }
+                    }
+                }
+            }
+        }
+
         let action = match map_key(key_event) {
             Some(a) => a,
             None => continue,
@@ -720,7 +825,9 @@ pub fn main() {
                 &mut state,
                 &nav_items,
                 &apps_registry,
+                &dashboards,
                 &mut active_internal_app,
+                &mut active_installed_dash,
             ) {
                 NavResult::Quit => break,
                 NavResult::RunForeground(cmd) => {
@@ -735,7 +842,7 @@ pub fn main() {
                 NavResult::ActivateInternalApp | NavResult::None => {}
             }
         } else {
-            match handle_main_key(action, &mut state, &mut active_internal_app) {
+            match handle_main_key(action, &mut state, &mut active_internal_app, &mut active_installed_dash) {
                 MainResult::Quit => break,
                 MainResult::RunForeground(cmd) => {
                     disable_raw_mode().ok();

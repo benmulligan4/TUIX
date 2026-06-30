@@ -6,5 +6,13 @@
   "Dashboard-2": {
     "label": "Dashboard 2 — System Stats",
     "module": "src.dashboards.custom.Dashboard-2"
+  },
+  "sigye": {
+    "label": "Sigye — Terminal Clock",
+    "type": "installed",
+    "repository": "https://github.com/am2rican5/sigye",
+    "cmd": ["sigye"],
+    "build_cmd": ["cargo", "build", "--release", "--manifest-path", "src/dashboards/installed/sigye/Cargo.toml"],
+    "local_bin": "src/dashboards/installed/sigye/target/release/sigye"
   }
 }
