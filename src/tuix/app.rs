@@ -214,7 +214,7 @@ fn build_nav_items(
             label: "System".to_string(),
             content: NavContent::Children(vec![
                 ("Task Manager".to_string(), "page:taskmanager".to_string()),
-                ("Branches    ▸".to_string(), "submenu:branches".to_string()),
+                ("Branches".to_string(), "submenu:branches".to_string()),
                 ("Restart".to_string(), "system:restart".to_string()),
                 ("Shutdown".to_string(), "system:shutdown".to_string()),
             ]),
@@ -340,8 +340,8 @@ fn render_dropdown(frame: &mut Frame, area: Rect, nav_items: &[NavItem], state: 
         let sub_height = (state.submenu_items.len() + 2) as u16;
 
         let sub_x = dropdown_rect.x + dropdown_width;
-        // Align the submenu vertically with the parent item
-        let sub_y = dropdown_rect.y + 1 + state.dropdown_cursor as u16;
+        // Align submenu top with the dropdown top
+        let sub_y = dropdown_rect.y;
 
         let sub_available_w = area.width.saturating_sub(sub_x.saturating_sub(area.x));
         if sub_width > sub_available_w {
@@ -379,17 +379,17 @@ fn render_dropdown(frame: &mut Frame, area: Rect, nav_items: &[NavItem], state: 
             let (style, text) = if i == state.submenu_cursor {
                 (
                     Style::default().fg(Color::Black).bg(Color::Cyan),
-                    format!(" »{} ", label),
+                    format!(" {} ", label),
                 )
             } else if is_current {
                 (
                     Style::default().fg(Color::Green).bg(Color::Black),
-                    format!("  {} ", label),
+                    format!(" {} ", label),
                 )
             } else {
                 (
                     Style::default().fg(Color::White).bg(Color::Black),
-                    format!("  {} ", label),
+                    format!(" {} ", label),
                 )
             };
             if i < sub_rows.len() {
@@ -598,6 +598,7 @@ enum NavResult {
     None,
     Quit,
     Restart,
+    Rebuild,
     ActivateInternalApp,
     #[allow(dead_code)]
     RunForeground(Vec<String>),
@@ -875,9 +876,9 @@ fn execute_action(
     } else if data == "system:restart" {
         return NavResult::Restart;
     } else if let Some(branch_name) = data.strip_prefix("branch:") {
-        // Switch git branch and restart TUIX
+        // Switch git branch, rebuild, and re-launch
         if git_checkout(branch_name).is_ok() {
-            return NavResult::Restart;
+            return NavResult::Rebuild;
         }
     }
 
@@ -1013,17 +1014,48 @@ fn run_foreground(cmd: &[String]) {
 // Entry point
 // ---------------------------------------------------------------------------
 
+enum ExitAction {
+    Quit,
+    Restart,
+    Rebuild,
+}
+
 pub fn main() {
     loop {
-        let should_restart = run_app();
-        if !should_restart {
-            break;
+        match run_app() {
+            ExitAction::Quit => break,
+            ExitAction::Restart => continue,
+            ExitAction::Rebuild => {
+                // Re-compile and run from the new branch
+                #[cfg(unix)]
+                {
+                    use std::os::unix::process::CommandExt;
+                    let _err = Command::new("cargo")
+                        .args(["run"])
+                        .exec();
+                    // exec only returns on error
+                    eprintln!("Rebuild failed");
+                    break;
+                }
+                #[cfg(windows)]
+                {
+                    let _ = Command::new("cargo")
+                        .args(["run"])
+                        .spawn();
+                    break;
+                }
+                #[cfg(not(any(unix, windows)))]
+                {
+                    eprintln!("Rebuild not supported on this platform");
+                    break;
+                }
+            }
         }
     }
 }
 
-/// Run the TUIX app. Returns `true` if the user requested a restart.
-fn run_app() -> bool {
+/// Run the TUIX app. Returns the exit action.
+fn run_app() -> ExitAction {
     std::fs::create_dir_all("logs").ok();
 
     let settings_map = registry::load_settings();
@@ -1041,7 +1073,7 @@ fn run_app() -> bool {
     let mut active_internal_app: Option<InternalApp> = None;
     let mut active_installed_dash: Option<InstalledDashboard> = None;
 
-    let mut should_restart = false;
+    let mut exit_action = ExitAction::Quit;
 
     // Setup terminal
     enable_raw_mode().expect("Failed to enable raw mode");
@@ -1133,7 +1165,11 @@ fn run_app() -> bool {
             ) {
                 NavResult::Quit => break,
                 NavResult::Restart => {
-                    should_restart = true;
+                    exit_action = ExitAction::Restart;
+                    break;
+                }
+                NavResult::Rebuild => {
+                    exit_action = ExitAction::Rebuild;
                     break;
                 }
                 NavResult::RunForeground(cmd) => {
@@ -1175,5 +1211,5 @@ fn run_app() -> bool {
     execute!(terminal.backend_mut(), LeaveAlternateScreen).ok();
     drop(terminal);
 
-    should_restart
+    exit_action
 }
