@@ -142,7 +142,11 @@ fn build_nav_items(
         },
         NavItem {
             label: "System".to_string(),
-            content: NavContent::Direct("page:system".to_string()),
+            content: NavContent::Children(vec![
+                ("Task Manager".to_string(), "page:taskmanager".to_string()),
+                ("Restart".to_string(), "system:restart".to_string()),
+                ("Shutdown".to_string(), "system:shutdown".to_string()),
+            ]),
         },
     ]
 }
@@ -278,7 +282,7 @@ fn status_color(status: AppStatus) -> Color {
 fn render_system_page(frame: &mut Frame, area: Rect, state: &TuixState, border_style: Style) {
     let block = Block::default()
         .borders(Borders::ALL)
-        .title(" System — Running Processes ")
+        .title(" Task Manager — Running Processes ")
         .title_alignment(ratatui::layout::Alignment::Right)
         .style(border_style);
     frame.render_widget(block, area);
@@ -404,7 +408,7 @@ fn render_main(
         match page.as_str() {
             "settings" => settings::page::render(frame, area, border_style),
             "touchscreen" => touchscreen::page::render(frame, area, border_style),
-            "system" => render_system_page(frame, area, state, border_style),
+            "system" | "taskmanager" => render_system_page(frame, area, state, border_style),
             _ => {}
         }
     } else if state.active_app.is_some() {
@@ -454,6 +458,7 @@ fn render_no_dashboard(frame: &mut Frame, area: Rect, border_style: Style) {
 enum NavResult {
     None,
     Quit,
+    Restart,
     ActivateInternalApp,
     #[allow(dead_code)]
     RunForeground(Vec<String>),
@@ -664,6 +669,10 @@ fn execute_action(
         state.active_page = Some(page_name.to_string());
         state.active_app = None;
         state.focus = FocusTarget::Main;
+    } else if data == "system:shutdown" {
+        return NavResult::Quit;
+    } else if data == "system:restart" {
+        return NavResult::Restart;
     }
 
     NavResult::None
@@ -738,7 +747,7 @@ fn handle_main_key(
     }
 
     // System page navigation
-    if state.active_page.as_deref() == Some("system") {
+    if matches!(state.active_page.as_deref(), Some("system") | Some("taskmanager")) {
         let running = process_manager::list_running();
         match action {
             Action::Up => {
@@ -776,6 +785,32 @@ fn handle_main_key(
     }
 
     MainResult::None
+}
+
+// ---------------------------------------------------------------------------
+// Restart — re-execute the current binary
+// ---------------------------------------------------------------------------
+
+fn exec_restart(exe: &std::path::Path) -> String {
+    // On Unix: replace the current process via exec
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        let err = Command::new(exe).exec();
+        return format!("{}", err);
+    }
+
+    // On Windows: spawn a new process and exit
+    #[cfg(windows)]
+    {
+        let _ = Command::new(exe).spawn();
+        std::process::exit(0);
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    {
+        return "Restart not supported on this platform".to_string();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -900,6 +935,16 @@ pub fn main() {
                 &mut active_installed_dash,
             ) {
                 NavResult::Quit => break,
+                NavResult::Restart => {
+                    // Restore terminal and re-execute the binary
+                    disable_raw_mode().ok();
+                    execute!(terminal.backend_mut(), LeaveAlternateScreen).ok();
+                    let exe = std::env::current_exe().expect("Failed to get current exe");
+                    let err = exec_restart(&exe);
+                    // If exec_restart returns, it failed — fall back to quit
+                    eprintln!("Restart failed: {}", err);
+                    break;
+                }
                 NavResult::RunForeground(cmd) => {
                     // Restore terminal, run subprocess, re-enter
                     disable_raw_mode().ok();
