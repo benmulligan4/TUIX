@@ -788,30 +788,9 @@ fn handle_main_key(
 }
 
 // ---------------------------------------------------------------------------
-// Restart — re-execute the current binary
+// Restart is handled by returning from the main loop and re-entering it.
+// No exec or spawn needed — clean terminal restore between cycles.
 // ---------------------------------------------------------------------------
-
-fn exec_restart(exe: &std::path::Path) -> String {
-    // On Unix: replace the current process via exec
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        let err = Command::new(exe).exec();
-        return format!("{}", err);
-    }
-
-    // On Windows: spawn a new process and exit
-    #[cfg(windows)]
-    {
-        let _ = Command::new(exe).spawn();
-        std::process::exit(0);
-    }
-
-    #[cfg(not(any(unix, windows)))]
-    {
-        return "Restart not supported on this platform".to_string();
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Foreground subprocess execution (takes over terminal)
@@ -829,6 +808,16 @@ fn run_foreground(cmd: &[String]) {
 // ---------------------------------------------------------------------------
 
 pub fn main() {
+    loop {
+        let should_restart = run_app();
+        if !should_restart {
+            break;
+        }
+    }
+}
+
+/// Run the TUIX app. Returns `true` if the user requested a restart.
+fn run_app() -> bool {
     std::fs::create_dir_all("logs").ok();
 
     let settings_map = registry::load_settings();
@@ -845,6 +834,8 @@ pub fn main() {
     let nav_items = build_nav_items(&dashboards, &apps_registry);
     let mut active_internal_app: Option<InternalApp> = None;
     let mut active_installed_dash: Option<InstalledDashboard> = None;
+
+    let mut should_restart = false;
 
     // Setup terminal
     enable_raw_mode().expect("Failed to enable raw mode");
@@ -936,13 +927,7 @@ pub fn main() {
             ) {
                 NavResult::Quit => break,
                 NavResult::Restart => {
-                    // Restore terminal and re-execute the binary
-                    disable_raw_mode().ok();
-                    execute!(terminal.backend_mut(), LeaveAlternateScreen).ok();
-                    let exe = std::env::current_exe().expect("Failed to get current exe");
-                    let err = exec_restart(&exe);
-                    // If exec_restart returns, it failed — fall back to quit
-                    eprintln!("Restart failed: {}", err);
+                    should_restart = true;
                     break;
                 }
                 NavResult::RunForeground(cmd) => {
@@ -975,7 +960,14 @@ pub fn main() {
         }
     }
 
+    // Drop installed dashboard PTY before restoring terminal
+    drop(active_installed_dash);
+    drop(active_internal_app);
+
     // Restore terminal
     disable_raw_mode().ok();
     execute!(terminal.backend_mut(), LeaveAlternateScreen).ok();
+    drop(terminal);
+
+    should_restart
 }
