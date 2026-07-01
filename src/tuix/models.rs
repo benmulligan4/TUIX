@@ -43,17 +43,22 @@ pub struct RunningApp {
 pub struct TuixState {
     pub focus: FocusTarget,
     pub active_dashboard: String,
-    /// "settings" | "touchscreen" | "system" | None
+    /// "settings" | "touchscreen" | "taskmanager" | None
     pub active_page: Option<String>,
     /// name of an active internal app, or None
     pub active_app: Option<String>,
     pub running_apps: Vec<RunningApp>,
-    /// index highlighted in the System page process list
+    /// index highlighted in the Task Manager process list
     pub system_cursor: usize,
     /// Custom navbar state
     pub nav_cursor: usize,
     pub nav_expanded: bool,
     pub dropdown_cursor: usize,
+    /// Submenu state (e.g. Branches flyout from System dropdown)
+    pub submenu_open: bool,
+    pub submenu_cursor: usize,
+    /// Cached submenu items: (label, action_string)
+    pub submenu_items: Vec<(String, String)>,
 }
 
 impl TuixState {
@@ -68,6 +73,9 @@ impl TuixState {
             nav_cursor: 0,
             nav_expanded: false,
             dropdown_cursor: 0,
+            submenu_open: false,
+            submenu_cursor: 0,
+            submenu_items: Vec::new(),
         }
     }
 }

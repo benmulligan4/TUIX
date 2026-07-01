@@ -78,6 +78,76 @@ impl InternalApp {
 }
 
 // ---------------------------------------------------------------------------
+// Git helpers
+// ---------------------------------------------------------------------------
+
+/// Get the current git branch name.
+#[allow(dead_code)]
+fn git_current_branch() -> Option<String> {
+    let output = Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .output()
+        .ok()?;
+    if output.status.success() {
+        Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    } else {
+        None
+    }
+}
+
+/// List all local git branches. Returns (branch_name, is_current) pairs.
+fn git_list_branches() -> Vec<(String, bool)> {
+    let output = match Command::new("git")
+        .args(["branch", "--format=%(refname:short)\t%(HEAD)"])
+        .output()
+    {
+        Ok(o) if o.status.success() => o,
+        _ => return Vec::new(),
+    };
+
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut branches: Vec<(String, bool)> = Vec::new();
+    let mut current_idx = None;
+
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let parts: Vec<&str> = line.splitn(2, '\t').collect();
+        let name = parts[0].to_string();
+        let is_current = parts.get(1).map(|s| s.trim() == "*").unwrap_or(false);
+        if is_current {
+            current_idx = Some(branches.len());
+        }
+        branches.push((name, is_current));
+    }
+
+    // Move current branch to the top
+    if let Some(idx) = current_idx {
+        if idx > 0 {
+            let current = branches.remove(idx);
+            branches.insert(0, current);
+        }
+    }
+
+    branches
+}
+
+/// Switch to a git branch. Returns Ok(()) on success.
+fn git_checkout(branch: &str) -> Result<(), String> {
+    let output = Command::new("git")
+        .args(["checkout", branch])
+        .output()
+        .map_err(|e| format!("{}", e))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Navbar definition
 // ---------------------------------------------------------------------------
 
@@ -144,6 +214,7 @@ fn build_nav_items(
             label: "System".to_string(),
             content: NavContent::Children(vec![
                 ("Task Manager".to_string(), "page:taskmanager".to_string()),
+                ("Branches    ▸".to_string(), "submenu:branches".to_string()),
                 ("Restart".to_string(), "system:restart".to_string()),
                 ("Shutdown".to_string(), "system:shutdown".to_string()),
             ]),
@@ -259,6 +330,74 @@ fn render_dropdown(frame: &mut Frame, area: Rect, nav_items: &[NavItem], state: 
                 Paragraph::new(Text::raw(text)).style(style),
                 inner_rows[i],
             );
+        }
+    }
+
+    // --- Submenu flyout (e.g. Branches) ---
+    if state.submenu_open && !state.submenu_items.is_empty() {
+        let sub_max_label = state.submenu_items.iter().map(|(l, _)| l.len()).max().unwrap_or(0);
+        let mut sub_width = (sub_max_label + 4) as u16;
+        let sub_height = (state.submenu_items.len() + 2) as u16;
+
+        let sub_x = dropdown_rect.x + dropdown_width;
+        // Align the submenu vertically with the parent item
+        let sub_y = dropdown_rect.y + 1 + state.dropdown_cursor as u16;
+
+        let sub_available_w = area.width.saturating_sub(sub_x.saturating_sub(area.x));
+        if sub_width > sub_available_w {
+            sub_width = sub_available_w.max(10);
+        }
+        let sub_available_h = area.height.saturating_sub(sub_y.saturating_sub(area.y));
+
+        let sub_rect = Rect {
+            x: sub_x,
+            y: sub_y,
+            width: sub_width,
+            height: sub_height.min(sub_available_h),
+        };
+
+        frame.render_widget(Clear, sub_rect);
+        frame.render_widget(
+            Block::default()
+                .borders(Borders::ALL)
+                .style(Style::default().bg(Color::Black)),
+            sub_rect,
+        );
+
+        let sub_inner = sub_rect.inner(Margin { horizontal: 1, vertical: 1 });
+        let sub_row_constraints: Vec<Constraint> = state.submenu_items
+            .iter()
+            .map(|_| Constraint::Length(1))
+            .collect();
+        let sub_rows = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints(sub_row_constraints)
+            .split(sub_inner);
+
+        for (i, (label, _)) in state.submenu_items.iter().enumerate() {
+            let is_current = label.starts_with('●');
+            let (style, text) = if i == state.submenu_cursor {
+                (
+                    Style::default().fg(Color::Black).bg(Color::Cyan),
+                    format!(" »{} ", label),
+                )
+            } else if is_current {
+                (
+                    Style::default().fg(Color::Green).bg(Color::Black),
+                    format!("  {} ", label),
+                )
+            } else {
+                (
+                    Style::default().fg(Color::White).bg(Color::Black),
+                    format!("  {} ", label),
+                )
+            };
+            if i < sub_rows.len() {
+                frame.render_widget(
+                    Paragraph::new(Text::raw(text)).style(style),
+                    sub_rows[i],
+                );
+            }
         }
     }
 }
@@ -484,9 +623,52 @@ fn handle_navbar_key(
     }
 
     if action == Action::Back {
-        if state.nav_expanded {
+        if state.submenu_open {
+            state.submenu_open = false;
+            state.submenu_cursor = 0;
+            state.submenu_items.clear();
+        } else if state.nav_expanded {
             state.nav_expanded = false;
             state.dropdown_cursor = 0;
+        }
+        return NavResult::None;
+    }
+
+    // --- Submenu is open (e.g. Branches flyout) ---
+    if state.submenu_open {
+        match action {
+            Action::Up => {
+                if state.submenu_cursor > 0 {
+                    state.submenu_cursor -= 1;
+                }
+            }
+            Action::Down => {
+                if state.submenu_cursor < state.submenu_items.len().saturating_sub(1) {
+                    state.submenu_cursor += 1;
+                }
+            }
+            Action::Left => {
+                // Close submenu, go back to parent dropdown
+                state.submenu_open = false;
+                state.submenu_cursor = 0;
+                state.submenu_items.clear();
+            }
+            Action::Enter => {
+                if !state.submenu_items.is_empty() {
+                    let data = state.submenu_items[state.submenu_cursor].1.clone();
+                    state.submenu_open = false;
+                    state.submenu_items.clear();
+                    return execute_action(
+                        &data,
+                        state,
+                        apps_registry,
+                        dashboards_registry,
+                        active_internal_app,
+                        active_installed_dash,
+                    );
+                }
+            }
+            _ => {}
         }
         return NavResult::None;
     }
@@ -506,17 +688,36 @@ fn handle_navbar_key(
                         state.dropdown_cursor += 1;
                     }
                 }
-                Action::Enter => {
+                Action::Enter | Action::Right => {
                     if !children.is_empty() {
-                        let data = children[state.dropdown_cursor].1.clone();
-                        return execute_action(
-                            &data,
-                            state,
-                            apps_registry,
-                            dashboards_registry,
-                            active_internal_app,
-                            active_installed_dash,
-                        );
+                        let data = &children[state.dropdown_cursor].1;
+                        // Check if this item opens a submenu
+                        if data == "submenu:branches" {
+                            let branches = git_list_branches();
+                            state.submenu_items = branches
+                                .iter()
+                                .map(|(name, is_current)| {
+                                    let label = if *is_current {
+                                        format!("● {}", name)
+                                    } else {
+                                        format!("  {}", name)
+                                    };
+                                    (label, format!("branch:{}", name))
+                                })
+                                .collect();
+                            state.submenu_open = true;
+                            state.submenu_cursor = 0;
+                        } else {
+                            let data = data.clone();
+                            return execute_action(
+                                &data,
+                                state,
+                                apps_registry,
+                                dashboards_registry,
+                                active_internal_app,
+                                active_installed_dash,
+                            );
+                        }
                     }
                 }
                 _ => {}
@@ -673,6 +874,11 @@ fn execute_action(
         return NavResult::Quit;
     } else if data == "system:restart" {
         return NavResult::Restart;
+    } else if let Some(branch_name) = data.strip_prefix("branch:") {
+        // Switch git branch and restart TUIX
+        if git_checkout(branch_name).is_ok() {
+            return NavResult::Restart;
+        }
     }
 
     NavResult::None
