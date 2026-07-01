@@ -1028,7 +1028,28 @@ pub fn main() {
             ExitAction::Rebuild => {
                 eprintln!("Building from new branch...");
 
-                // Step 1: compile the new code
+                let exe = match std::env::current_exe() {
+                    Ok(p) => p,
+                    Err(_) => {
+                        eprintln!("Could not determine binary path.");
+                        break;
+                    }
+                };
+
+                // On Windows the running .exe is locked by the OS.
+                // Rename it out of the way so cargo can write the new one.
+                #[cfg(windows)]
+                let _old_exe = {
+                    let old = exe.with_extension("old.exe");
+                    // Remove any previous .old.exe first
+                    let _ = std::fs::remove_file(&old);
+                    if std::fs::rename(&exe, &old).is_err() {
+                        eprintln!("Warning: could not rename running binary.");
+                    }
+                    Some(old)
+                };
+
+                // Compile the new code
                 let build = Command::new("cargo")
                     .args(["build"])
                     .stdout(std::process::Stdio::inherit())
@@ -1040,18 +1061,14 @@ pub fn main() {
                     _ => {
                         eprintln!("Build failed. Press Enter to continue on current code.");
                         let _ = std::io::stdin().read_line(&mut String::new());
+                        // Restore the old binary if build failed
+                        #[cfg(windows)]
+                        if let Some(ref old) = _old_exe {
+                            let _ = std::fs::rename(old, &exe);
+                        }
                         continue;
                     }
                 }
-
-                // Step 2: find our own binary path and run the new build
-                let exe = match std::env::current_exe() {
-                    Ok(p) => p,
-                    Err(_) => {
-                        eprintln!("Could not determine binary path.");
-                        break;
-                    }
-                };
 
                 // On Unix: exec replaces this process with the new binary
                 #[cfg(unix)]
@@ -1071,6 +1088,10 @@ pub fn main() {
                         .stdout(std::process::Stdio::inherit())
                         .stderr(std::process::Stdio::inherit())
                         .status();
+                    // Clean up the old binary
+                    if let Some(ref old) = _old_exe {
+                        let _ = std::fs::remove_file(old);
+                    }
                     match result {
                         Ok(s) => std::process::exit(s.code().unwrap_or(0)),
                         Err(e) => {
