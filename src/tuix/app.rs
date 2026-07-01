@@ -142,7 +142,11 @@ fn build_nav_items(
         },
         NavItem {
             label: "System".to_string(),
-            content: NavContent::Direct("page:system".to_string()),
+            content: NavContent::Children(vec![
+                ("Task Manager".to_string(), "page:taskmanager".to_string()),
+                ("Restart".to_string(), "system:restart".to_string()),
+                ("Shutdown".to_string(), "system:shutdown".to_string()),
+            ]),
         },
     ]
 }
@@ -278,7 +282,7 @@ fn status_color(status: AppStatus) -> Color {
 fn render_system_page(frame: &mut Frame, area: Rect, state: &TuixState, border_style: Style) {
     let block = Block::default()
         .borders(Borders::ALL)
-        .title(" System — Running Processes ")
+        .title(" Task Manager — Running Processes ")
         .title_alignment(ratatui::layout::Alignment::Right)
         .style(border_style);
     frame.render_widget(block, area);
@@ -404,7 +408,7 @@ fn render_main(
         match page.as_str() {
             "settings" => settings::page::render(frame, area, border_style),
             "touchscreen" => touchscreen::page::render(frame, area, border_style),
-            "system" => render_system_page(frame, area, state, border_style),
+            "system" | "taskmanager" => render_system_page(frame, area, state, border_style),
             _ => {}
         }
     } else if state.active_app.is_some() {
@@ -454,6 +458,7 @@ fn render_no_dashboard(frame: &mut Frame, area: Rect, border_style: Style) {
 enum NavResult {
     None,
     Quit,
+    Restart,
     ActivateInternalApp,
     #[allow(dead_code)]
     RunForeground(Vec<String>),
@@ -664,6 +669,10 @@ fn execute_action(
         state.active_page = Some(page_name.to_string());
         state.active_app = None;
         state.focus = FocusTarget::Main;
+    } else if data == "system:shutdown" {
+        return NavResult::Quit;
+    } else if data == "system:restart" {
+        return NavResult::Restart;
     }
 
     NavResult::None
@@ -738,7 +747,7 @@ fn handle_main_key(
     }
 
     // System page navigation
-    if state.active_page.as_deref() == Some("system") {
+    if matches!(state.active_page.as_deref(), Some("system") | Some("taskmanager")) {
         let running = process_manager::list_running();
         match action {
             Action::Up => {
@@ -779,6 +788,11 @@ fn handle_main_key(
 }
 
 // ---------------------------------------------------------------------------
+// Restart is handled by returning from the main loop and re-entering it.
+// No exec or spawn needed — clean terminal restore between cycles.
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
 // Foreground subprocess execution (takes over terminal)
 // ---------------------------------------------------------------------------
 
@@ -794,6 +808,16 @@ fn run_foreground(cmd: &[String]) {
 // ---------------------------------------------------------------------------
 
 pub fn main() {
+    loop {
+        let should_restart = run_app();
+        if !should_restart {
+            break;
+        }
+    }
+}
+
+/// Run the TUIX app. Returns `true` if the user requested a restart.
+fn run_app() -> bool {
     std::fs::create_dir_all("logs").ok();
 
     let settings_map = registry::load_settings();
@@ -810,6 +834,8 @@ pub fn main() {
     let nav_items = build_nav_items(&dashboards, &apps_registry);
     let mut active_internal_app: Option<InternalApp> = None;
     let mut active_installed_dash: Option<InstalledDashboard> = None;
+
+    let mut should_restart = false;
 
     // Setup terminal
     enable_raw_mode().expect("Failed to enable raw mode");
@@ -900,6 +926,10 @@ pub fn main() {
                 &mut active_installed_dash,
             ) {
                 NavResult::Quit => break,
+                NavResult::Restart => {
+                    should_restart = true;
+                    break;
+                }
                 NavResult::RunForeground(cmd) => {
                     // Restore terminal, run subprocess, re-enter
                     disable_raw_mode().ok();
@@ -930,7 +960,14 @@ pub fn main() {
         }
     }
 
+    // Drop installed dashboard PTY before restoring terminal
+    drop(active_installed_dash);
+    drop(active_internal_app);
+
     // Restore terminal
     disable_raw_mode().ok();
     execute!(terminal.backend_mut(), LeaveAlternateScreen).ok();
+    drop(terminal);
+
+    should_restart
 }
