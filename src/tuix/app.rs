@@ -1026,24 +1026,60 @@ pub fn main() {
             ExitAction::Quit => break,
             ExitAction::Restart => continue,
             ExitAction::Rebuild => {
-                // Re-compile and run from the new branch
+                eprintln!("Building from new branch...");
+
+                // Step 1: compile the new code
+                let build = Command::new("cargo")
+                    .args(["build"])
+                    .stdout(std::process::Stdio::inherit())
+                    .stderr(std::process::Stdio::inherit())
+                    .status();
+
+                match build {
+                    Ok(s) if s.success() => {}
+                    _ => {
+                        eprintln!("Build failed. Press Enter to continue on current code.");
+                        let _ = std::io::stdin().read_line(&mut String::new());
+                        continue;
+                    }
+                }
+
+                // Step 2: find our own binary path and run the new build
+                let exe = match std::env::current_exe() {
+                    Ok(p) => p,
+                    Err(_) => {
+                        eprintln!("Could not determine binary path.");
+                        break;
+                    }
+                };
+
+                // On Unix: exec replaces this process with the new binary
                 #[cfg(unix)]
                 {
                     use std::os::unix::process::CommandExt;
-                    let _err = Command::new("cargo")
-                        .args(["run"])
-                        .exec();
-                    // exec only returns on error
-                    eprintln!("Rebuild failed");
+                    let _err = Command::new(&exe).exec();
+                    eprintln!("Failed to exec new binary");
                     break;
                 }
+
+                // On Windows: run the new binary as a blocking child,
+                // keeping this process alive so the terminal stays attached
                 #[cfg(windows)]
                 {
-                    let _ = Command::new("cargo")
-                        .args(["run"])
-                        .spawn();
-                    break;
+                    let result = Command::new(&exe)
+                        .stdin(std::process::Stdio::inherit())
+                        .stdout(std::process::Stdio::inherit())
+                        .stderr(std::process::Stdio::inherit())
+                        .status();
+                    match result {
+                        Ok(s) => std::process::exit(s.code().unwrap_or(0)),
+                        Err(e) => {
+                            eprintln!("Failed to run new binary: {}", e);
+                            break;
+                        }
+                    }
                 }
+
                 #[cfg(not(any(unix, windows)))]
                 {
                     eprintln!("Rebuild not supported on this platform");
