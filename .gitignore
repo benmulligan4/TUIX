@@ -1,5 +1,6 @@
 /target
 logs/
+tuix.log
 .DS_Store
 
 .idea
