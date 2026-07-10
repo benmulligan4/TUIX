@@ -30,6 +30,7 @@ use crate::dashboards::{dashboard_1, dashboard_2};
 use crate::dashboards::installed_runner::InstalledDashboard;
 use crate::settings;
 use crate::touchscreen;
+use crate::utilities::logging;
 
 // ---------------------------------------------------------------------------
 // Internal app wrapper — supports multiple built-in app types
@@ -144,6 +145,7 @@ fn build_nav_items(
             label: "System".to_string(),
             content: NavContent::Children(vec![
                 ("Task Manager".to_string(), "page:taskmanager".to_string()),
+                ("Logs".to_string(), "page:logs".to_string()),
                 ("Restart".to_string(), "system:restart".to_string()),
                 ("Shutdown".to_string(), "system:shutdown".to_string()),
             ]),
@@ -387,6 +389,113 @@ fn render_app_log(frame: &mut Frame, area: Rect, app_name: &str, border_style: S
 }
 
 // ---------------------------------------------------------------------------
+// Logs page renderer — shows tuix.log with colored severity levels
+// ---------------------------------------------------------------------------
+
+fn render_logs_page(frame: &mut Frame, area: Rect, state: &TuixState, border_style: Style) {
+    use ratatui::text::{Line, Span};
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" Logs — tuix.log ")
+        .title_alignment(ratatui::layout::Alignment::Right)
+        .style(border_style);
+    frame.render_widget(block, area);
+    let inner = area.inner(Margin { horizontal: 1, vertical: 1 });
+
+    let lines = logging::read_log_lines();
+    let visible_height = inner.height as usize;
+
+    if lines.is_empty() {
+        frame.render_widget(
+            Paragraph::new(Text::raw("\n  No log entries yet."))
+                .style(Style::default().fg(Color::DarkGray)),
+            inner,
+        );
+        return;
+    }
+
+    // Resolve scroll position: usize::MAX means "jump to bottom"
+    let max_scroll = lines.len().saturating_sub(visible_height);
+    let scroll = if state.log_scroll == usize::MAX {
+        max_scroll
+    } else {
+        state.log_scroll.min(max_scroll)
+    };
+
+    let end = (scroll + visible_height).min(lines.len());
+    let visible_lines = &lines[scroll..end];
+
+    let styled_lines: Vec<Line> = visible_lines
+        .iter()
+        .map(|line| {
+            // Find severity tag and color just the tag text
+            if let Some(start) = line.find("[INFO]") {
+                let before = &line[..start];
+                let tag = "[INFO]";
+                let after = &line[start + tag.len()..];
+                Line::from(vec![
+                    Span::styled(format!("  {}", before), Style::default().fg(Color::White)),
+                    Span::styled(tag, Style::default().fg(Color::Cyan)),
+                    Span::styled(after.to_string(), Style::default().fg(Color::White)),
+                ])
+            } else if let Some(start) = line.find("[WARN]") {
+                let before = &line[..start];
+                let tag = "[WARN]";
+                let after = &line[start + tag.len()..];
+                Line::from(vec![
+                    Span::styled(format!("  {}", before), Style::default().fg(Color::White)),
+                    Span::styled(tag, Style::default().fg(Color::Yellow)),
+                    Span::styled(after.to_string(), Style::default().fg(Color::White)),
+                ])
+            } else if let Some(start) = line.find("[ERROR]") {
+                let before = &line[..start];
+                let tag = "[ERROR]";
+                let after = &line[start + tag.len()..];
+                Line::from(vec![
+                    Span::styled(format!("  {}", before), Style::default().fg(Color::White)),
+                    Span::styled(tag, Style::default().fg(Color::Red)),
+                    Span::styled(after.to_string(), Style::default().fg(Color::White)),
+                ])
+            } else {
+                Line::from(Span::styled(
+                    format!("  {}", line),
+                    Style::default().fg(Color::DarkGray),
+                ))
+            }
+        })
+        .collect();
+
+    let scrollbar_info = format!(
+        " Line {}-{} of {} ",
+        scroll + 1,
+        end,
+        lines.len()
+    );
+
+    frame.render_widget(
+        Paragraph::new(styled_lines),
+        inner,
+    );
+
+    // Render scroll position indicator at bottom-right of border
+    let info_width = scrollbar_info.len() as u16;
+    if area.width > info_width + 2 {
+        let info_rect = Rect {
+            x: area.x + area.width - info_width - 1,
+            y: area.y + area.height - 1,
+            width: info_width,
+            height: 1,
+        };
+        frame.render_widget(
+            Paragraph::new(Text::raw(scrollbar_info))
+                .style(Style::default().fg(Color::DarkGray)),
+            info_rect,
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Main container renderer
 // ---------------------------------------------------------------------------
 
@@ -409,6 +518,7 @@ fn render_main(
             "settings" => settings::page::render(frame, area, border_style),
             "touchscreen" => touchscreen::page::render(frame, area, border_style),
             "system" | "taskmanager" => render_system_page(frame, area, state, border_style),
+            "logs" => render_logs_page(frame, area, state, border_style),
             _ => {}
         }
     } else if state.active_app.is_some() {
@@ -575,6 +685,7 @@ fn execute_action(
     state.dropdown_cursor = 0;
 
     if let Some(name) = data.strip_prefix("dashboard:") {
+        logging::info(&format!("Navigated to dashboard: {}", name));
         state.active_dashboard = name.to_string();
         state.active_page = None;
         state.active_app = None;
@@ -624,6 +735,7 @@ fn execute_action(
             *active_installed_dash = None;
         }
     } else if let Some(name) = data.strip_prefix("app:") {
+        logging::info(&format!("Opened app: {}", name));
         let meta = apps_registry.get(name);
         let app_type = meta
             .and_then(|m| m.get("type"))
@@ -666,12 +778,18 @@ fn execute_action(
             state.focus = FocusTarget::Main;
         }
     } else if let Some(page_name) = data.strip_prefix("page:") {
+        logging::info(&format!("Opened page: {}", page_name));
+        if page_name == "logs" {
+            state.log_scroll = usize::MAX; // scroll to bottom
+        }
         state.active_page = Some(page_name.to_string());
         state.active_app = None;
         state.focus = FocusTarget::Main;
     } else if data == "system:shutdown" {
+        logging::info("System shutdown requested");
         return NavResult::Quit;
     } else if data == "system:restart" {
+        logging::info("System restart requested");
         return NavResult::Restart;
     }
 
@@ -773,6 +891,25 @@ fn handle_main_key(
         return MainResult::None;
     }
 
+    // Logs page navigation
+    if matches!(state.active_page.as_deref(), Some("logs")) {
+        let total_lines = logging::read_log_lines().len();
+        match action {
+            Action::Up => {
+                if state.log_scroll > 0 {
+                    state.log_scroll = state.log_scroll.saturating_sub(1);
+                }
+            }
+            Action::Down => {
+                if state.log_scroll < total_lines.saturating_sub(1) {
+                    state.log_scroll += 1;
+                }
+            }
+            _ => {}
+        }
+        return MainResult::None;
+    }
+
     // Internal app key forwarding
     if let Some(app) = active_internal_app {
         if let Some(key_name) = action_to_key_name(action) {
@@ -819,6 +956,9 @@ pub fn main() {
 /// Run the TUIX app. Returns `true` if the user requested a restart.
 fn run_app() -> bool {
     std::fs::create_dir_all("logs").ok();
+
+    logging::init();
+    logging::info("TUIX started");
 
     let settings_map = registry::load_settings();
     let dashboards = registry::load_dashboards();
