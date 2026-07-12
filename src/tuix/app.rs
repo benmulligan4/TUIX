@@ -415,13 +415,11 @@ fn render_logs_page(frame: &mut Frame, area: Rect, state: &TuixState, border_sty
         return;
     }
 
-    // Resolve scroll position: usize::MAX means "jump to bottom"
+    // Clamp scroll to valid range. Any out-of-bounds value (including the
+    // usize::MAX "jump to bottom" sentinel set on page open) collapses to
+    // max_scroll so the latest entries are shown first.
     let max_scroll = lines.len().saturating_sub(visible_height);
-    let scroll = if state.log_scroll == usize::MAX {
-        max_scroll
-    } else {
-        state.log_scroll.min(max_scroll)
-    };
+    let scroll = state.log_scroll.min(max_scroll);
 
     let end = (scroll + visible_height).min(lines.len());
     let visible_lines = &lines[scroll..end];
@@ -894,15 +892,21 @@ fn handle_main_key(
     // Logs page navigation
     if matches!(state.active_page.as_deref(), Some("logs")) {
         let total_lines = logging::read_log_lines().len();
+
+        // Resolve the "jump to bottom" sentinel to a real line index before
+        // applying any delta — without this, saturating_sub(usize::MAX) leaves
+        // the value astronomically large and scrolling appears broken.
+        if state.log_scroll >= total_lines {
+            state.log_scroll = total_lines.saturating_sub(1);
+        }
+
         match action {
             Action::Up => {
-                if state.log_scroll > 0 {
-                    state.log_scroll = state.log_scroll.saturating_sub(1);
-                }
+                state.log_scroll = state.log_scroll.saturating_sub(1);
             }
             Action::Down => {
-                if state.log_scroll < total_lines.saturating_sub(1) {
-                    state.log_scroll += 1;
+                if total_lines > 0 {
+                    state.log_scroll = (state.log_scroll + 1).min(total_lines - 1);
                 }
             }
             _ => {}
