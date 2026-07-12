@@ -54,7 +54,8 @@ pub struct TuixState {
     pub nav_cursor: usize,
     pub nav_expanded: bool,
     pub dropdown_cursor: usize,
-    /// Scroll offset for the log viewer (line index at top of view)
+    /// Scroll offset for the log viewer — reverse offset from the bottom.
+    /// 0 = show the most recent (bottom) entries. N = scroll N lines toward the top.
     pub log_scroll: usize,
 }
 
@@ -70,7 +71,7 @@ impl TuixState {
             nav_cursor: 0,
             nav_expanded: false,
             dropdown_cursor: 0,
-            log_scroll: usize::MAX,
+            log_scroll: 0,
         }
     }
 }

@@ -404,7 +404,6 @@ fn render_logs_page(frame: &mut Frame, area: Rect, state: &TuixState, border_sty
     let inner = area.inner(Margin { horizontal: 1, vertical: 1 });
 
     let lines = logging::read_log_lines();
-    let visible_height = inner.height as usize;
 
     if lines.is_empty() {
         frame.render_widget(
@@ -415,14 +414,15 @@ fn render_logs_page(frame: &mut Frame, area: Rect, state: &TuixState, border_sty
         return;
     }
 
-    // Clamp scroll to valid range. Any out-of-bounds value (including the
-    // usize::MAX "jump to bottom" sentinel set on page open) collapses to
-    // max_scroll so the latest entries are shown first.
-    let max_scroll = lines.len().saturating_sub(visible_height);
-    let scroll = state.log_scroll.min(max_scroll);
-
-    let end = (scroll + visible_height).min(lines.len());
-    let visible_lines = &lines[scroll..end];
+    // log_scroll is a reverse offset from the bottom (0 = most recent entries).
+    // Compute the start line so that the view ends at (total - log_scroll).
+    let total = lines.len();
+    let visible_height = inner.height as usize;
+    let max_offset = total.saturating_sub(visible_height);
+    let offset = state.log_scroll.min(max_offset);
+    let start = max_offset.saturating_sub(offset);
+    let end = (start + visible_height).min(total);
+    let visible_lines = &lines[start..end];
 
     let styled_lines: Vec<Line> = visible_lines
         .iter()
@@ -466,9 +466,9 @@ fn render_logs_page(frame: &mut Frame, area: Rect, state: &TuixState, border_sty
 
     let scrollbar_info = format!(
         " Line {}-{} of {} ",
-        scroll + 1,
+        start + 1,
         end,
-        lines.len()
+        total
     );
 
     frame.render_widget(
@@ -778,7 +778,7 @@ fn execute_action(
     } else if let Some(page_name) = data.strip_prefix("page:") {
         logging::info(&format!("Opened page: {}", page_name));
         if page_name == "logs" {
-            state.log_scroll = usize::MAX; // scroll to bottom
+            state.log_scroll = 0; // 0 = show bottom (most recent entries)
         }
         state.active_page = Some(page_name.to_string());
         state.active_app = None;
@@ -892,22 +892,15 @@ fn handle_main_key(
     // Logs page navigation
     if matches!(state.active_page.as_deref(), Some("logs")) {
         let total_lines = logging::read_log_lines().len();
-
-        // Resolve the "jump to bottom" sentinel to a real line index before
-        // applying any delta — without this, saturating_sub(usize::MAX) leaves
-        // the value astronomically large and scrolling appears broken.
-        if state.log_scroll >= total_lines {
-            state.log_scroll = total_lines.saturating_sub(1);
-        }
-
         match action {
+            // Up = scroll toward older entries (increase reverse offset from bottom)
             Action::Up => {
-                state.log_scroll = state.log_scroll.saturating_sub(1);
+                let max_offset = total_lines.saturating_sub(1);
+                state.log_scroll = (state.log_scroll + 1).min(max_offset);
             }
+            // Down = scroll toward newer entries (decrease reverse offset)
             Action::Down => {
-                if total_lines > 0 {
-                    state.log_scroll = (state.log_scroll + 1).min(total_lines - 1);
-                }
+                state.log_scroll = state.log_scroll.saturating_sub(1);
             }
             _ => {}
         }
