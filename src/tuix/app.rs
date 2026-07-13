@@ -24,8 +24,8 @@ use super::models::{Action, AppStatus, FocusTarget, TuixState};
 use super::process_manager;
 use super::registry;
 
-use crate::applications::default::character_set::{AppAction, CharacterSetApp};
-use crate::applications::default::text_editor::{TextEditorAction, TextEditorApp};
+use crate::applications::character_set::{AppAction, CharacterSetApp};
+use crate::applications::text_editor::{TextEditorAction, TextEditorApp};
 use crate::dashboards::{dashboard_1, dashboard_2};
 use crate::dashboards::installed_runner::InstalledDashboard;
 use crate::settings;
@@ -457,6 +457,15 @@ fn render_logs_page(frame: &mut Frame, area: Rect, state: &TuixState, border_sty
                     Span::styled(tag, Style::default().fg(Color::Red)),
                     Span::styled(after.to_string(), Style::default().fg(Color::White)),
                 ])
+            } else if let Some(start) = line.find("[SCRIPT]") {
+                let before = &line[..start];
+                let tag = "[SCRIPT]";
+                let after = &line[start + tag.len()..];
+                Line::from(vec![
+                    Span::styled(format!("  {}", before), Style::default().fg(Color::White)),
+                    Span::styled(tag, Style::default().fg(Color::Magenta)),
+                    Span::styled(after.to_string(), Style::default().fg(Color::White)),
+                ])
             } else {
                 Line::from(Span::styled(
                     format!("  {}", line),
@@ -695,23 +704,28 @@ fn execute_action(
         if let Some(meta) = dashboards_registry.get(name) {
             let dash_type = meta.get("type").and_then(|t| t.as_str()).unwrap_or("");
             if dash_type == "installed" {
-                let mut cmd: Vec<String> = meta
-                    .get("cmd")
-                    .and_then(|c| c.as_array())
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                            .collect()
-                    })
-                    .unwrap_or_default();
-
-                // Try local binary path first if the command isn't found in PATH
-                if let Some(local_bin) = meta.get("local_bin").and_then(|v| v.as_str()) {
-                    let local_path = std::path::Path::new(local_bin);
+                let source = meta.get("source").and_then(|s| s.as_str()).unwrap_or("global");
+                let cmd: Vec<String> = if source == "local" {
+                    // Run from local downloads path
+                    let local_bin = format!("downloads/dashboards/{}/target/release/{}", name, name);
+                    let local_path = std::path::Path::new(&local_bin);
                     if local_path.exists() {
-                        cmd = vec![local_bin.to_string()];
+                        vec![local_bin]
+                    } else {
+                        logging::error(&format!("Local binary not found for dashboard {}: {}", name, local_bin));
+                        vec![]
                     }
-                }
+                } else {
+                    // Run from global PATH (cargo install puts it in ~/.cargo/bin/)
+                    meta.get("cmd")
+                        .and_then(|c| c.as_array())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                                .collect()
+                        })
+                        .unwrap_or_default()
+                };
 
                 let label = meta
                     .get("label")
