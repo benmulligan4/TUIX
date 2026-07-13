@@ -21,6 +21,7 @@ pub enum Level {
     Info,
     Warn,
     Error,
+    Script,
 }
 
 impl Level {
@@ -29,6 +30,7 @@ impl Level {
             Level::Info => "INFO",
             Level::Warn => "WARN",
             Level::Error => "ERROR",
+            Level::Script => "SCRIPT",
         }
     }
 }
