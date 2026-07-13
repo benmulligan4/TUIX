@@ -4,6 +4,11 @@
     "type": "internal",
     "module": "applications::character_set"
   },
+  "FileExplorer": {
+    "label": "File Explorer",
+    "type": "internal",
+    "module": "applications::file_explorer"
+  },
   "TextEditor": {
     "label": "Text Editor",
     "type": "internal",

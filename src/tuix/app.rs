@@ -25,6 +25,7 @@ use super::process_manager;
 use super::registry;
 
 use crate::applications::character_set::{AppAction, CharacterSetApp};
+use crate::applications::file_explorer::{FileExplorerAction, FileExplorerApp};
 use crate::applications::text_editor::{TextEditorAction, TextEditorApp};
 use crate::dashboards::{dashboard_1, dashboard_2};
 use crate::dashboards::installed_runner::InstalledDashboard;
@@ -38,6 +39,7 @@ use crate::utilities::logging;
 
 enum InternalApp {
     CharacterSet(CharacterSetApp),
+    FileExplorer(FileExplorerApp),
     TextEditor(TextEditorApp),
 }
 
@@ -45,6 +47,7 @@ impl InternalApp {
     fn render(&mut self, frame: &mut Frame, area: Rect, border_style: Style) {
         match self {
             InternalApp::CharacterSet(app) => app.render(frame, area, border_style),
+            InternalApp::FileExplorer(app) => app.render(frame, area, border_style),
             InternalApp::TextEditor(app) => app.render(frame, area, border_style),
         }
     }
@@ -55,6 +58,9 @@ impl InternalApp {
             InternalApp::CharacterSet(app) => {
                 matches!(app.handle_key(code), Some(AppAction::Back))
             }
+            InternalApp::FileExplorer(app) => {
+                matches!(app.handle_key(code), Some(FileExplorerAction::Back))
+            }
             InternalApp::TextEditor(app) => {
                 matches!(app.handle_key(code), Some(TextEditorAction::Back))
             }
@@ -64,6 +70,7 @@ impl InternalApp {
     fn stop(&mut self) {
         match self {
             InternalApp::CharacterSet(app) => app.stop(),
+            InternalApp::FileExplorer(app) => app.stop(),
             InternalApp::TextEditor(app) => app.stop(),
         }
     }
@@ -760,6 +767,11 @@ fn execute_action(
                     let mut app = TextEditorApp::new();
                     app.start();
                     InternalApp::TextEditor(app)
+                }
+                "FileExplorer" => {
+                    let mut app = FileExplorerApp::new();
+                    app.start();
+                    InternalApp::FileExplorer(app)
                 }
                 _ => {
                     let mut app = CharacterSetApp::new();
