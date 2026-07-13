@@ -1,6 +1,7 @@
 /target
 logs/
 tuix.log
+downloads/
 .DS_Store
 
 .idea
@@ -8,6 +9,3 @@ tuix.log
 
 temp
 library
-
-src/applications/installed
-src/dashboards/installed
