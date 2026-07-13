@@ -46,6 +46,7 @@ lazy_static::lazy_static! {
 
 /// Launch an external app as a supervised subprocess.
 /// Returns the RunningApp entry. If already running, returns existing entry.
+#[allow(dead_code)]
 pub fn launch(name: &str, cmd: &[String]) -> Option<RunningApp> {
     ensure_logs_dir();
 

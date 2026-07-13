@@ -512,6 +512,7 @@ fn render_main(
     state: &TuixState,
     active_internal_app: &mut Option<InternalApp>,
     active_installed_dash: &mut Option<InstalledDashboard>,
+    active_pty_app: &mut Option<InstalledDashboard>,
 ) {
     let focused = state.focus == FocusTarget::Main;
     let border_style = if focused {
@@ -531,6 +532,9 @@ fn render_main(
     } else if state.active_app.is_some() {
         if let Some(app) = active_internal_app {
             app.render(frame, area, border_style);
+        } else if let Some(pty) = active_pty_app {
+            // Installed (PTY) app — render its virtual terminal output
+            pty.render(frame, area, border_style);
         } else if let Some(app_name) = &state.active_app {
             render_app_log(frame, area, app_name, border_style);
         }
@@ -589,6 +593,7 @@ fn handle_navbar_key(
     dashboards_registry: &std::collections::HashMap<String, Value>,
     active_internal_app: &mut Option<InternalApp>,
     active_installed_dash: &mut Option<InstalledDashboard>,
+    active_pty_app: &mut Option<InstalledDashboard>,
 ) -> NavResult {
     if action == Action::Tab {
         state.focus = FocusTarget::Main;
@@ -633,6 +638,7 @@ fn handle_navbar_key(
                             dashboards_registry,
                             active_internal_app,
                             active_installed_dash,
+                            active_pty_app,
                         );
                     }
                 }
@@ -670,6 +676,7 @@ fn handle_navbar_key(
                         dashboards_registry,
                         active_internal_app,
                         active_installed_dash,
+                        active_pty_app,
                     );
                 }
             }
@@ -687,6 +694,7 @@ fn execute_action(
     dashboards_registry: &std::collections::HashMap<String, Value>,
     active_internal_app: &mut Option<InternalApp>,
     active_installed_dash: &mut Option<InstalledDashboard>,
+    active_pty_app: &mut Option<InstalledDashboard>,
 ) -> NavResult {
     state.nav_expanded = false;
     state.dropdown_cursor = 0;
@@ -696,6 +704,7 @@ fn execute_action(
         state.active_dashboard = name.to_string();
         state.active_page = None;
         state.active_app = None;
+        *active_pty_app = None; // close any open PTY app
         state.focus = FocusTarget::Main;
 
         // Check if this is an installed (third-party) dashboard
@@ -767,23 +776,59 @@ fn execute_action(
                     InternalApp::CharacterSet(app)
                 }
             };
+            *active_pty_app = None;
             *active_internal_app = Some(internal);
             state.active_app = Some(name.to_string());
             state.active_page = None;
             state.focus = FocusTarget::Main;
             return NavResult::ActivateInternalApp;
         } else {
-            let cmd: Vec<String> = meta
+            // Installed (external) app — launch via PTY for full TUI rendering
+            let source = meta
+                .and_then(|m| m.get("source"))
+                .and_then(|s| s.as_str())
+                .unwrap_or("global");
+
+            let base_cmd: Vec<String> = meta
                 .and_then(|m| m.get("cmd"))
                 .and_then(|c| c.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                        .collect()
-                })
+                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
                 .unwrap_or_default();
-            if !cmd.is_empty() {
-                process_manager::launch(name, &cmd);
+
+            // Extra arguments to append after the binary (e.g. a .puz file path)
+            let extra_args: Vec<String> = meta
+                .and_then(|m| m.get("args"))
+                .and_then(|a| a.as_array())
+                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+                .unwrap_or_default();
+
+            let mut full_cmd: Vec<String> = if source == "local" {
+                let binary_name = base_cmd.first().map(|s| s.as_str()).unwrap_or(name);
+                let local_bin = format!("downloads/applications/{}/target/release/{}", name, binary_name);
+                let local_path = std::path::Path::new(&local_bin);
+                if local_path.exists() {
+                    vec![local_bin]
+                } else {
+                    logging::error(&format!("Local binary not found for app {}: {}", name, local_bin));
+                    vec![]
+                }
+            } else {
+                base_cmd
+            };
+
+            full_cmd.extend(extra_args);
+
+            let label = meta
+                .and_then(|m| m.get("label"))
+                .and_then(|v| v.as_str())
+                .unwrap_or(name)
+                .to_string();
+
+            *active_internal_app = None;
+            *active_pty_app = None;
+            if !full_cmd.is_empty() {
+                *active_pty_app = InstalledDashboard::start(name, &label, &full_cmd, 80, 24);
+                logging::info(&format!("Launched installed app {} via PTY: {:?}", name, full_cmd));
             }
             state.active_app = Some(name.to_string());
             state.active_page = None;
@@ -794,6 +839,7 @@ fn execute_action(
         if page_name == "logs" {
             state.log_scroll = 0; // 0 = show bottom (most recent entries)
         }
+        *active_pty_app = None; // close any open PTY app
         state.active_page = Some(page_name.to_string());
         state.active_app = None;
         state.focus = FocusTarget::Main;
@@ -824,6 +870,7 @@ fn handle_main_key(
     state: &mut TuixState,
     active_internal_app: &mut Option<InternalApp>,
     active_installed_dash: &mut Option<InstalledDashboard>,
+    active_pty_app: &mut Option<InstalledDashboard>,
 ) -> MainResult {
     if action == Action::Quit {
         return MainResult::Quit;
@@ -860,6 +907,7 @@ fn handle_main_key(
             }
             state.active_app = None;
             *active_internal_app = None;
+            *active_pty_app = None;
         } else if active_installed_dash.is_some() {
             // Close the installed dashboard and go back to default
             *active_installed_dash = None;
@@ -985,6 +1033,7 @@ fn run_app() -> bool {
     let nav_items = build_nav_items(&dashboards, &apps_registry);
     let mut active_internal_app: Option<InternalApp> = None;
     let mut active_installed_dash: Option<InstalledDashboard> = None;
+    let mut active_pty_app: Option<InstalledDashboard> = None;
 
     let mut should_restart = false;
 
@@ -1005,7 +1054,7 @@ fn run_app() -> bool {
                     .split(frame.area());
 
                 // 1. Draw main container
-                render_main(frame, rows[1], &state, &mut active_internal_app, &mut active_installed_dash);
+                render_main(frame, rows[1], &state, &mut active_internal_app, &mut active_installed_dash, &mut active_pty_app);
 
                 // 2. Draw navbar label row
                 render_navbar(frame, rows[0], &nav_items, &state);
@@ -1033,7 +1082,7 @@ fn run_app() -> bool {
             _ => continue,
         };
 
-        // When an installed dashboard is active and main is focused,
+        // When an installed dashboard or PTY app is active and main is focused,
         // forward raw key events directly to the PTY subprocess.
         // Only Esc (quit) and Tab (switch to navbar) are reserved by TUIX.
         if state.focus == FocusTarget::Main {
@@ -1043,13 +1092,29 @@ fn run_app() -> bool {
                     && state.active_app.is_none()
                 {
                     match key_event.code {
-                        crossterm::event::KeyCode::Esc => break, // Quit TUIX
+                        crossterm::event::KeyCode::Esc => break,
                         crossterm::event::KeyCode::Tab => {
                             state.focus = FocusTarget::Navbar;
                             continue;
                         }
                         _ => {
                             dash.send_key_event(key_event);
+                            continue;
+                        }
+                    }
+                }
+            }
+            // PTY-based installed app — forward raw keys directly
+            if let Some(pty) = &mut active_pty_app {
+                if state.active_app.is_some() && state.active_page.is_none() {
+                    match key_event.code {
+                        crossterm::event::KeyCode::Esc => break,
+                        crossterm::event::KeyCode::Tab => {
+                            state.focus = FocusTarget::Navbar;
+                            continue;
+                        }
+                        _ => {
+                            pty.send_key_event(key_event);
                             continue;
                         }
                     }
@@ -1075,6 +1140,7 @@ fn run_app() -> bool {
                 &dashboards,
                 &mut active_internal_app,
                 &mut active_installed_dash,
+                &mut active_pty_app,
             ) {
                 NavResult::Quit => break,
                 NavResult::Restart => {
@@ -1093,7 +1159,7 @@ fn run_app() -> bool {
                 NavResult::ActivateInternalApp | NavResult::None => {}
             }
         } else {
-            match handle_main_key(action, &mut state, &mut active_internal_app, &mut active_installed_dash) {
+            match handle_main_key(action, &mut state, &mut active_internal_app, &mut active_installed_dash, &mut active_pty_app) {
                 MainResult::Quit => break,
                 MainResult::RunForeground(cmd) => {
                     disable_raw_mode().ok();
@@ -1111,7 +1177,8 @@ fn run_app() -> bool {
         }
     }
 
-    // Drop installed dashboard PTY before restoring terminal
+    // Drop PTY processes before restoring terminal
+    drop(active_pty_app);
     drop(active_installed_dash);
     drop(active_internal_app);
 

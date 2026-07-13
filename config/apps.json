@@ -4,6 +4,14 @@
     "type": "internal",
     "module": "applications::character_set"
   },
+  "Crossword": {
+    "label": "Crossword",
+    "type": "installed",
+    "source": "local",
+    "repository": "https://github.com/matrixfrog/crossword",
+    "cmd": ["crosstui"],
+    "args": ["downloads/applications/Crossword/crossword/puzzles/version-1.2-puzzle.puz"]
+  },
   "TextEditor": {
     "label": "Text Editor",
     "type": "internal",
