@@ -1253,6 +1253,38 @@ fn run_app() -> bool {
             continue;
         }
 
+        // ---- Intercept: Shift+Tab for terminal output focus (Scripts & Git) ----
+        if matches!(key_event.code, crossterm::event::KeyCode::BackTab)
+            && state.focus == FocusTarget::Main
+            && matches!(state.active_page.as_deref(), Some("settings"))
+            && matches!(state.settings.selected_category(), SettingsCategory::Git)
+        {
+            state.settings.terminal_focused = !state.settings.terminal_focused;
+            continue;
+        }
+
+        // When terminal output is focused, Up/Down/W/S scroll it
+        if state.settings.terminal_focused
+            && state.focus == FocusTarget::Main
+            && matches!(state.active_page.as_deref(), Some("settings"))
+        {
+            let total = state.settings.terminal_output.len();
+            match key_event.code {
+                crossterm::event::KeyCode::Up | crossterm::event::KeyCode::Char('w') => {
+                    if state.settings.terminal_scroll > 0 {
+                        state.settings.terminal_scroll -= 1;
+                    }
+                }
+                crossterm::event::KeyCode::Down | crossterm::event::KeyCode::Char('s') => {
+                    if state.settings.terminal_scroll < total.saturating_sub(1) {
+                        state.settings.terminal_scroll += 1;
+                    }
+                }
+                _ => {}
+            }
+            continue;
+        }
+
         // ---- Helper: check if key matches configured focus toggle key ----
         let toggle_key_name = {
             let s = crate::settings::persistence::load();

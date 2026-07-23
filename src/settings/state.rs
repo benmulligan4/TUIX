@@ -76,6 +76,10 @@ pub struct SettingsState {
     pub awaiting_key: bool,
     /// Terminal output from script execution (cleared on category switch).
     pub terminal_output: Vec<String>,
+    /// Whether focus is inside the terminal output panel (Scripts & Git).
+    pub terminal_focused: bool,
+    /// Scroll offset for the terminal output panel.
+    pub terminal_scroll: usize,
 }
 
 impl SettingsState {
@@ -87,6 +91,8 @@ impl SettingsState {
             right_scroll: 0,
             awaiting_key: false,
             terminal_output: Vec::new(),
+            terminal_focused: false,
+            terminal_scroll: 0,
         }
     }
 
@@ -100,5 +106,7 @@ impl SettingsState {
         self.right_cursor = 0;
         self.right_scroll = 0;
         self.terminal_output.clear();
+        self.terminal_focused = false;
+        self.terminal_scroll = 0;
     }
 }

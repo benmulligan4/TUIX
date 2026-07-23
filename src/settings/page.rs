@@ -122,7 +122,7 @@ pub fn render(frame: &mut Frame, area: Rect, border_style: Style, ss: &mut Setti
             button_mapping::render(frame, content_area, cursor, scroll, ss.awaiting_key)
         }
         SettingsCategory::Hotkeys => hotkeys::render(frame, content_area, cursor, scroll),
-        SettingsCategory::Git => git::render(frame, content_area, cursor, scroll, &ss.terminal_output),
+        SettingsCategory::Git => git::render(frame, content_area, cursor, scroll, &ss.terminal_output, ss.terminal_focused, ss.terminal_scroll),
         SettingsCategory::Utilities => utilities::render(frame, content_area, cursor, scroll),
         SettingsCategory::Power => power::render(frame, content_area, cursor, scroll),
     }

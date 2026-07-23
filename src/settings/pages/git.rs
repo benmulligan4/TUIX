@@ -1,16 +1,24 @@
 /// Scripts & Git settings — run scripts, pull, rebuild, restore defaults.
 
 use ratatui::{
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Constraint, Direction, Layout, Margin, Rect},
     style::{Color, Style},
     text::{Line, Span},
-    widgets::Paragraph,
+    widgets::{Block, Borders, Paragraph},
     Frame,
 };
 
 use crate::settings::state::SettingsState;
 
-pub fn render(frame: &mut Frame, area: Rect, cursor: usize, _scroll: usize, terminal_output: &[String]) {
+pub fn render(
+    frame: &mut Frame,
+    area: Rect,
+    cursor: usize,
+    _scroll: usize,
+    terminal_output: &[String],
+    terminal_focused: bool,
+    terminal_scroll: usize,
+) {
     let branch = std::process::Command::new("git")
         .args(["rev-parse", "--abbrev-ref", "HEAD"])
         .output()
@@ -69,12 +77,29 @@ pub fn render(frame: &mut Frame, area: Rect, cursor: usize, _scroll: usize, term
 
     frame.render_widget(Paragraph::new(lines), sections[0]);
 
-    // Terminal output area (read-only)
+    // Terminal output area with border — highlighted when focused
+    let terminal_border_style = if terminal_focused {
+        Style::default().fg(Color::Cyan)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+
+    let terminal_title = if terminal_focused {
+        " Terminal Output  [Shift+Tab to exit] "
+    } else {
+        " Terminal Output  [Shift+Tab to enter] "
+    };
+
+    let terminal_block = Block::default()
+        .borders(Borders::ALL)
+        .title(terminal_title)
+        .style(terminal_border_style);
+    frame.render_widget(terminal_block, sections[1]);
+
+    let term_inner = sections[1].inner(Margin { horizontal: 1, vertical: 1 });
+    let visible_height = term_inner.height as usize;
+
     let mut term_lines: Vec<Line> = Vec::new();
-    term_lines.push(Line::from(Span::styled(
-        "  ─── Terminal Output ───",
-        label_style,
-    )));
 
     if terminal_output.is_empty() {
         term_lines.push(Line::from(Span::styled(
@@ -82,15 +107,37 @@ pub fn render(frame: &mut Frame, area: Rect, cursor: usize, _scroll: usize, term
             Style::default().fg(Color::DarkGray),
         )));
     } else {
-        for line in terminal_output {
+        // Apply scroll offset
+        let max_scroll = terminal_output.len().saturating_sub(visible_height);
+        let scroll = terminal_scroll.min(max_scroll);
+        let end = (scroll + visible_height).min(terminal_output.len());
+        for line in &terminal_output[scroll..end] {
             term_lines.push(Line::from(Span::styled(
                 format!("  {}", line),
                 Style::default().fg(Color::White),
             )));
         }
+
+        // Scroll indicator
+        if terminal_focused && terminal_output.len() > visible_height {
+            let info = format!(" {}/{} ", scroll + 1, terminal_output.len());
+            let info_width = info.len() as u16;
+            if sections[1].width > info_width + 2 {
+                let indicator_rect = Rect {
+                    x: sections[1].x + sections[1].width - info_width - 1,
+                    y: sections[1].y + sections[1].height - 1,
+                    width: info_width,
+                    height: 1,
+                };
+                frame.render_widget(
+                    Paragraph::new(info).style(Style::default().fg(Color::DarkGray)),
+                    indicator_rect,
+                );
+            }
+        }
     }
 
-    frame.render_widget(Paragraph::new(term_lines), sections[1]);
+    frame.render_widget(Paragraph::new(term_lines), term_inner);
 }
 
 pub fn item_count() -> usize { 9 }
