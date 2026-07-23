@@ -849,17 +849,19 @@ fn execute_action(
         return NavResult::Restart;
     } else if data == "system:open_repo" {
         logging::info("Opening TUIX Git repository");
-        state.popup = Some(("Opening Git Repository...".to_string(), Instant::now()));
         let url = "https://github.com/benmulligan4/TUIX";
-        let opened = if cfg!(target_os = "windows") {
-            Command::new("cmd").args(["/C", "start", url]).status().is_ok()
+        // Use spawn() (non-blocking) so TUIX doesn't freeze waiting for the browser
+        let spawned = if cfg!(target_os = "windows") {
+            Command::new("cmd").args(["/C", "start", "", url]).spawn().is_ok()
         } else if cfg!(target_os = "macos") {
-            Command::new("open").arg(url).status().is_ok()
+            Command::new("open").arg(url).spawn().is_ok()
         } else {
-            Command::new("xdg-open").arg(url).status().is_ok()
+            Command::new("xdg-open").arg(url).spawn().is_ok()
         };
-        if !opened {
-            state.popup = Some(("Could not open browser. Visit: https://github.com/benmulligan4/TUIX".to_string(), Instant::now()));
+        if spawned {
+            state.popup = Some(("Opening Git Repository...".to_string(), Instant::now()));
+        } else {
+            state.popup = Some((format!("Visit: {}", url), Instant::now()));
             logging::warn(&format!("Could not open browser. Visit: {}", url));
         }
     }
