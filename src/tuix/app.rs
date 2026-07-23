@@ -29,6 +29,7 @@ use crate::applications::text_editor::{TextEditorAction, TextEditorApp};
 use crate::dashboards::{dashboard_1, dashboard_2};
 use crate::dashboards::installed_runner::InstalledDashboard;
 use crate::settings;
+use crate::settings::state::SettingsCategory;
 use crate::touchscreen;
 use crate::utilities::logging;
 
@@ -144,8 +145,10 @@ fn build_nav_items(
         NavItem {
             label: "System".to_string(),
             content: NavContent::Children(vec![
+                ("⚙️  Settings".to_string(), "page:settings".to_string()),
                 ("Task Manager".to_string(), "page:taskmanager".to_string()),
                 ("Logs".to_string(), "page:logs".to_string()),
+                ("🌐 Open Git Repo".to_string(), "system:open_repo".to_string()),
                 ("Restart".to_string(), "system:restart".to_string()),
                 ("Shutdown".to_string(), "system:shutdown".to_string()),
             ]),
@@ -509,7 +512,7 @@ fn render_logs_page(frame: &mut Frame, area: Rect, state: &TuixState, border_sty
 fn render_main(
     frame: &mut Frame,
     area: Rect,
-    state: &TuixState,
+    state: &mut TuixState,
     active_internal_app: &mut Option<InternalApp>,
     active_installed_dash: &mut Option<InstalledDashboard>,
 ) {
@@ -520,9 +523,9 @@ fn render_main(
         Style::default()
     };
 
-    if let Some(page) = &state.active_page {
+    if let Some(page) = &state.active_page.clone() {
         match page.as_str() {
-            "settings" => settings::page::render(frame, area, border_style),
+            "settings" => settings::page::render(frame, area, border_style, &mut state.settings),
             "touchscreen" => touchscreen::page::render(frame, area, border_style),
             "system" | "taskmanager" => render_system_page(frame, area, state, border_style),
             "logs" => render_logs_page(frame, area, state, border_style),
@@ -803,6 +806,19 @@ fn execute_action(
     } else if data == "system:restart" {
         logging::info("System restart requested");
         return NavResult::Restart;
+    } else if data == "system:open_repo" {
+        logging::info("Opening TUIX Git repository");
+        let url = "https://github.com/benmulligan4/TUIX";
+        let opened = if cfg!(target_os = "windows") {
+            Command::new("cmd").args(["/C", "start", url]).status().is_ok()
+        } else if cfg!(target_os = "macos") {
+            Command::new("open").arg(url).status().is_ok()
+        } else {
+            Command::new("xdg-open").arg(url).status().is_ok()
+        };
+        if !opened {
+            logging::warn(&format!("Could not open browser. Visit: {}", url));
+        }
     }
 
     NavResult::None
@@ -851,7 +867,10 @@ fn handle_main_key(
     }
 
     if action == Action::Back {
-        if state.active_page.is_some() {
+        // Settings page handles its own Back (pane switching)
+        if matches!(state.active_page.as_deref(), Some("settings")) {
+            // Fall through to settings handler below
+        } else if state.active_page.is_some() {
             state.active_page = None;
             state.active_app = None;
         } else if state.active_app.is_some() {
@@ -917,6 +936,63 @@ fn handle_main_key(
                 state.log_scroll = state.log_scroll.saturating_sub(1);
             }
             _ => {}
+        }
+        return MainResult::None;
+    }
+
+    // Settings page navigation
+    if matches!(state.active_page.as_deref(), Some("settings")) {
+        let ss = &mut state.settings;
+        if ss.in_right_pane {
+            // In right pane — navigate settings items
+            let count = settings::page::current_item_count(ss);
+            match action {
+                Action::Up => {
+                    if ss.right_cursor > 0 {
+                        ss.right_cursor -= 1;
+                    }
+                }
+                Action::Down => {
+                    if count > 0 && ss.right_cursor < count.saturating_sub(1) {
+                        ss.right_cursor += 1;
+                    }
+                }
+                Action::Enter => {
+                    settings::page::handle_right_pane_enter(ss);
+                }
+                Action::Back => {
+                    ss.in_right_pane = false;
+                }
+                _ => {}
+            }
+        } else {
+            // In left pane — navigate categories
+            let cat_count = SettingsCategory::ALL.len();
+            match action {
+                Action::Up => {
+                    if ss.category_cursor > 0 {
+                        ss.category_cursor -= 1;
+                    }
+                }
+                Action::Down => {
+                    if ss.category_cursor < cat_count.saturating_sub(1) {
+                        ss.category_cursor += 1;
+                    }
+                }
+                Action::Enter | Action::Right => {
+                    let cat = ss.selected_category();
+                    if cat.is_available() || cat.is_pi_only() {
+                        ss.in_right_pane = true;
+                        ss.reset_right_pane();
+                    }
+                }
+                Action::Back => {
+                    // Back from left pane closes the settings page
+                    state.active_page = None;
+                    return MainResult::None;
+                }
+                _ => {}
+            }
         }
         return MainResult::None;
     }
@@ -1005,7 +1081,7 @@ fn run_app() -> bool {
                     .split(frame.area());
 
                 // 1. Draw main container
-                render_main(frame, rows[1], &state, &mut active_internal_app, &mut active_installed_dash);
+                render_main(frame, rows[1], &mut state, &mut active_internal_app, &mut active_installed_dash);
 
                 // 2. Draw navbar label row
                 render_navbar(frame, rows[0], &nav_items, &state);
