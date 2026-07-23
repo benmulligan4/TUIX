@@ -34,9 +34,7 @@ fn settings_path() -> PathBuf {
             "screen_timeout": "Never",
             "fullscreen": false
         },
-        "hotkeys": {
-            "numpad_navigation": false
-        },
+        "hotkeys": {},
         "button_mapping": {
             "focus_toggle_key": "Tab"
         },

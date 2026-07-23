@@ -240,9 +240,7 @@ pub fn handle_enter(cursor: usize, ss: &mut SettingsState) {
                     "screen_timeout": "Never",
                     "fullscreen": false
                 },
-                "hotkeys": {
-                    "numpad_navigation": false
-                },
+                "hotkeys": {},
                 "button_mapping": {
                     "focus_toggle_key": "Tab"
                 },
