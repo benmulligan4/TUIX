@@ -6,12 +6,6 @@ use std::fs;
 use std::path::PathBuf;
 
 fn settings_path() -> PathBuf {
-    let exe_dir = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|d| d.to_path_buf()));
-    let cwd = std::env::current_dir().unwrap_or_default();
-    let base = exe_dir.unwrap_or(cwd);
-
     // Look for config/ relative to CWD first (dev), then next to the exe
     let cwd_path = std::env::current_dir()
         .unwrap_or_default()
@@ -20,7 +14,40 @@ fn settings_path() -> PathBuf {
     if cwd_path.exists() {
         return cwd_path;
     }
-    base.join("config").join("settings.json")
+    // If it doesn't exist, create it with defaults
+    let config_dir = std::env::current_dir()
+        .unwrap_or_default()
+        .join("config");
+    let _ = fs::create_dir_all(&config_dir);
+    let path = config_dir.join("settings.json");
+    let defaults = serde_json::json!({
+        "default_dashboard": "Dashboard-1",
+        "theme": "default",
+        "appearance": {
+            "accent_color": "Cyan",
+            "clock_enabled": false,
+            "clock_format_24h": true,
+            "clock_show_seconds": false,
+            "font": "Default"
+        },
+        "display": {
+            "screen_timeout": "Never",
+            "fullscreen": false
+        },
+        "hotkeys": {
+            "numpad_navigation": false
+        },
+        "button_mapping": {
+            "focus_toggle_key": "Tab"
+        },
+        "utilities": {
+            "onscreen_keyboard_enabled": true
+        }
+    });
+    if let Ok(content) = serde_json::to_string_pretty(&defaults) {
+        let _ = fs::write(&path, &content);
+    }
+    path
 }
 
 /// Load the full settings.json as a serde_json::Value.

@@ -72,6 +72,8 @@ pub struct SettingsState {
     pub right_cursor: usize,
     /// Scroll offset for the right pane content.
     pub right_scroll: usize,
+    /// When true, the next key press will be captured as a button mapping.
+    pub awaiting_key: bool,
 }
 
 impl SettingsState {
@@ -81,6 +83,7 @@ impl SettingsState {
             in_right_pane: false,
             right_cursor: 0,
             right_scroll: 0,
+            awaiting_key: false,
         }
     }
 

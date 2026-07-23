@@ -83,7 +83,8 @@ pub fn render(frame: &mut Frame, area: Rect, border_style: Style, ss: &mut Setti
 
     // --- Right pane: category content ---
     let cat = ss.selected_category();
-    let cursor = ss.right_cursor;
+    // Only show cursor highlight when the right pane is focused
+    let cursor = if ss.in_right_pane { ss.right_cursor } else { usize::MAX };
     let scroll = ss.right_scroll;
 
     // Category title
@@ -118,7 +119,7 @@ pub fn render(frame: &mut Frame, area: Rect, border_style: Style, ss: &mut Setti
         SettingsCategory::Display => display::render(frame, content_area, cursor, scroll),
         SettingsCategory::Appearance => appearance::render(frame, content_area, cursor, scroll),
         SettingsCategory::ButtonMapping => {
-            button_mapping::render(frame, content_area, cursor, scroll)
+            button_mapping::render(frame, content_area, cursor, scroll, ss.awaiting_key)
         }
         SettingsCategory::Hotkeys => hotkeys::render(frame, content_area, cursor, scroll),
         SettingsCategory::Git => git::render(frame, content_area, cursor, scroll),
@@ -148,18 +149,25 @@ pub enum SettingsAction {
     None,
     Quit,
     Restart,
+    ShowPopup(String),
 }
 
 /// Handle Enter press in the right pane.
-pub fn handle_right_pane_enter(ss: &SettingsState) -> SettingsAction {
+pub fn handle_right_pane_enter(ss: &mut SettingsState) -> SettingsAction {
     let cursor = ss.right_cursor;
     match ss.selected_category() {
         SettingsCategory::Display => { display::handle_enter(cursor); SettingsAction::None }
         SettingsCategory::Appearance => { appearance::handle_enter(cursor); SettingsAction::None }
-        SettingsCategory::ButtonMapping => { button_mapping::handle_enter(cursor); SettingsAction::None }
+        SettingsCategory::ButtonMapping => { button_mapping::handle_enter(ss); SettingsAction::None }
         SettingsCategory::Hotkeys => { hotkeys::handle_enter(cursor); SettingsAction::None }
         SettingsCategory::Git => { git::handle_enter(cursor); SettingsAction::None }
-        SettingsCategory::Utilities => { utilities::handle_enter(cursor); SettingsAction::None }
+        SettingsCategory::Utilities => {
+            if utilities::handle_enter(cursor) {
+                SettingsAction::ShowPopup("Logs cleared.".to_string())
+            } else {
+                SettingsAction::None
+            }
+        }
         SettingsCategory::Power => power::handle_enter(cursor),
         _ => SettingsAction::None,
     }

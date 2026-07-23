@@ -1,4 +1,4 @@
-/// Appearance settings — clock, default dashboard, accent colour.
+/// Appearance settings — clock, default dashboard, TUIX colour.
 
 use ratatui::{
     layout::Rect,
@@ -13,6 +13,20 @@ use crate::settings::persistence;
 const ACCENT_COLORS: &[&str] = &["Cyan", "Green", "Yellow", "Blue", "Magenta", "Red", "White"];
 const FONT_OPTIONS: &[&str] = &["Default", "Monospace", "Serif", "Sans", "Narrow"];
 
+/// Convert a colour name string to a ratatui Color.
+pub fn color_from_name(name: &str) -> Color {
+    match name {
+        "Cyan" => Color::Cyan,
+        "Green" => Color::Green,
+        "Yellow" => Color::Yellow,
+        "Blue" => Color::Blue,
+        "Magenta" => Color::Magenta,
+        "Red" => Color::Red,
+        "White" => Color::White,
+        _ => Color::Cyan,
+    }
+}
+
 pub fn render(frame: &mut Frame, area: Rect, cursor: usize, _scroll: usize) {
     let settings = persistence::load();
     let accent = persistence::get_str(&settings, "appearance.accent_color", "Cyan");
@@ -23,7 +37,7 @@ pub fn render(frame: &mut Frame, area: Rect, cursor: usize, _scroll: usize) {
     let default_dash = persistence::get_str(&settings, "default_dashboard", "Dashboard-1");
 
     let items: Vec<(&str, String)> = vec![
-        ("Accent Colour", accent),
+        ("TUIX Colour", accent),
         ("Clock", if clock_on { "Enabled".into() } else { "Disabled".into() }),
         ("Clock Format", if clock_24h { "24 hour".into() } else { "12 hour".into() }),
         ("Show Seconds", if clock_secs { "Yes".into() } else { "No".into() }),

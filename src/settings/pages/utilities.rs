@@ -43,18 +43,20 @@ pub fn render(frame: &mut Frame, area: Rect, cursor: usize, _scroll: usize) {
 
 pub fn item_count() -> usize { 2 }
 
-pub fn handle_enter(cursor: usize) {
+pub fn handle_enter(cursor: usize) -> bool {
     match cursor {
         0 => {
             let mut settings = persistence::load();
             let current = persistence::get_bool(&settings, "utilities.onscreen_keyboard_enabled", true);
             persistence::set(&mut settings, "utilities.onscreen_keyboard_enabled", serde_json::Value::Bool(!current));
             persistence::save(&settings);
+            false
         }
         1 => {
             // Clear logs — truncate tuix.log
             let _ = std::fs::write("tuix.log", "");
+            true // Signal popup
         }
-        _ => {}
+        _ => false,
     }
 }

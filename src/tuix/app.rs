@@ -164,6 +164,11 @@ fn render_navbar(frame: &mut Frame, area: Rect, nav_items: &[NavItem], state: &T
     let focused = state.focus == FocusTarget::Navbar;
     let labels: Vec<&str> = nav_items.iter().map(|i| i.label.as_str()).collect();
 
+    // Load accent colour from settings
+    let settings = crate::settings::persistence::load();
+    let accent_name = crate::settings::persistence::get_str(&settings, "appearance.accent_color", "Cyan");
+    let accent_color = crate::settings::pages::appearance::color_from_name(&accent_name);
+
     let mut constraints: Vec<Constraint> = labels
         .iter()
         .map(|lbl| Constraint::Length((lbl.len() + 4) as u16))
@@ -177,7 +182,7 @@ fn render_navbar(frame: &mut Frame, area: Rect, nav_items: &[NavItem], state: &T
 
     for (i, label) in labels.iter().enumerate() {
         let style = if focused && i == state.nav_cursor {
-            Style::default().fg(Color::Black).bg(Color::Cyan)
+            Style::default().fg(Color::Black).bg(accent_color)
         } else {
             Style::default().fg(Color::White)
         };
@@ -185,6 +190,34 @@ fn render_navbar(frame: &mut Frame, area: Rect, nav_items: &[NavItem], state: &T
             Paragraph::new(Text::raw(format!("  {}  ", label))).style(style),
             cols[i],
         );
+    }
+
+    // Render clock in the rightmost column if enabled
+    let clock_on = crate::settings::persistence::get_bool(&settings, "appearance.clock_enabled", false);
+    if clock_on {
+        let clock_24h = crate::settings::persistence::get_bool(&settings, "appearance.clock_format_24h", true);
+        let clock_secs = crate::settings::persistence::get_bool(&settings, "appearance.clock_show_seconds", false);
+        let now = chrono::Local::now();
+        let time_str = if clock_24h {
+            if clock_secs { now.format("%H:%M:%S").to_string() } else { now.format("%H:%M").to_string() }
+        } else {
+            if clock_secs { now.format("%I:%M:%S %p").to_string() } else { now.format("%I:%M %p").to_string() }
+        };
+        let clock_width = time_str.len() as u16 + 2;
+        let last_col = cols[labels.len()]; // the Fill(1) column
+        if last_col.width >= clock_width {
+            let clock_rect = Rect {
+                x: last_col.x + last_col.width - clock_width,
+                y: last_col.y,
+                width: clock_width,
+                height: 1,
+            };
+            frame.render_widget(
+                Paragraph::new(Text::raw(format!(" {} ", time_str)))
+                    .style(Style::default().fg(accent_color)),
+                clock_rect,
+            );
+        }
     }
 }
 
@@ -517,8 +550,11 @@ fn render_main(
     active_installed_dash: &mut Option<InstalledDashboard>,
 ) {
     let focused = state.focus == FocusTarget::Main;
+    let settings = crate::settings::persistence::load();
+    let accent_name = crate::settings::persistence::get_str(&settings, "appearance.accent_color", "Cyan");
+    let accent_color = crate::settings::pages::appearance::color_from_name(&accent_name);
     let border_style = if focused {
-        Style::default().fg(Color::Cyan)
+        Style::default().fg(accent_color)
     } else {
         Style::default()
     };
@@ -950,6 +986,23 @@ fn handle_main_key(
     // Settings page navigation
     if matches!(state.active_page.as_deref(), Some("settings")) {
         let ss = &mut state.settings;
+
+        // Key capture mode for button mapping
+        if ss.awaiting_key {
+            let key_name = match action {
+                Action::Tab => "Tab",
+                Action::Enter => "Enter",
+                Action::Up => "Up",
+                Action::Down => "Down",
+                Action::Left => "Left",
+                Action::Right => "Right",
+                Action::Back => "Q",
+                Action::Quit => "Esc",
+            };
+            crate::settings::pages::button_mapping::capture_key(ss, key_name);
+            return MainResult::None;
+        }
+
         if ss.in_right_pane {
             // In right pane — navigate settings items
             let count = settings::page::current_item_count(ss);
@@ -968,6 +1021,9 @@ fn handle_main_key(
                     match settings::page::handle_right_pane_enter(ss) {
                         settings::page::SettingsAction::Quit => return MainResult::Quit,
                         settings::page::SettingsAction::Restart => return MainResult::Restart,
+                        settings::page::SettingsAction::ShowPopup(msg) => {
+                            state.popup = Some((msg, Instant::now()));
+                        }
                         settings::page::SettingsAction::None => {}
                     }
                 }

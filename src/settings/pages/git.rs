@@ -26,6 +26,7 @@ pub fn render(frame: &mut Frame, area: Rect, cursor: usize, _scroll: usize) {
         format!("Run Install Script (install{})", script_ext),
         format!("Run Clone Script (clone{})", script_ext),
         format!("Run Setup Script (setup{})", script_ext),
+        "Check VNC Viewer Status".to_string(),
     ];
 
     let value_style = Style::default().fg(Color::White);
@@ -78,7 +79,7 @@ pub fn render(frame: &mut Frame, area: Rect, cursor: usize, _scroll: usize) {
     frame.render_widget(Paragraph::new(term_lines), sections[1]);
 }
 
-pub fn item_count() -> usize { 6 }
+pub fn item_count() -> usize { 7 }
 
 pub fn handle_enter(_cursor: usize) {
     // Script/git execution — subprocess output capture to be implemented

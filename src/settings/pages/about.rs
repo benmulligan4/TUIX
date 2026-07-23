@@ -44,14 +44,17 @@ pub fn render(frame: &mut Frame, area: Rect, _cursor: usize, _scroll: usize) {
     let dash_count = persistence::load_dashboard_names().len();
     let app_count = persistence::load_app_names().len();
 
+    // Get local IP for VNC viewer
+    let vnc_ip = get_local_ip();
+
     let info_style = Style::default().fg(Color::White);
     let label_style = Style::default().fg(Color::DarkGray);
 
     let lines: Vec<Line> = vec![
-        Line::from(vec![
-            Span::styled("  TUIX Version:    ", label_style),
-            Span::styled(env!("CARGO_PKG_VERSION"), info_style),
-        ]),
+        // Line::from(vec![
+        //     Span::styled("  TUIX Version:    ", label_style),
+        //     Span::styled(env!("CARGO_PKG_VERSION"), info_style),
+        // ]),
         Line::from(vec![
             Span::styled("  Git Branch:      ", label_style),
             Span::styled(&branch, info_style),
@@ -85,13 +88,17 @@ pub fn render(frame: &mut Frame, area: Rect, _cursor: usize, _scroll: usize) {
             Span::styled("  Terminal Size:   ", label_style),
             Span::styled(format!("{}x{}", term_w, term_h), info_style),
         ]),
+        Line::from(vec![
+            Span::styled("  VNC Viewer IP:   ", label_style),
+            Span::styled(&vnc_ip, info_style),
+        ]),
         Line::from(""),
         Line::from(vec![
             Span::styled("  Default Dash:    ", label_style),
             Span::styled(&default_dash, info_style),
         ]),
         Line::from(vec![
-            Span::styled("  Accent Colour:   ", label_style),
+            Span::styled("  TUIX Colour:     ", label_style),
             Span::styled(&accent, info_style),
         ]),
         Line::from(vec![
@@ -108,3 +115,25 @@ pub fn render(frame: &mut Frame, area: Rect, _cursor: usize, _scroll: usize) {
 }
 
 pub fn item_count() -> usize { 0 }
+
+/// Get the local IP address (for VNC viewer connection info).
+fn get_local_ip() -> String {
+    // Try hostname -I on Linux, ipconfig on Windows
+    if cfg!(target_os = "windows") {
+        std::process::Command::new("powershell")
+            .args(["-Command", "(Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.PrefixOrigin -ne 'WellKnown' } | Select-Object -First 1).IPAddress"])
+            .output()
+            .ok()
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .map(|s| s.trim().to_string())
+            .unwrap_or_else(|| "Unknown".into())
+    } else {
+        std::process::Command::new("hostname")
+            .arg("-I")
+            .output()
+            .ok()
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .map(|s| s.split_whitespace().next().unwrap_or("Unknown").to_string())
+            .unwrap_or_else(|| "Unknown".into())
+    }
+}
