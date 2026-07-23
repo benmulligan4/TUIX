@@ -1280,9 +1280,51 @@ fn run_app() -> bool {
             continue;
         }
 
-        // ---- Intercept: Hotkey number keys (1-9) when no page/app active ----
-        if state.focus == FocusTarget::Main
-            && state.active_page.is_none()
+        // ---- Intercept: Numpad navigation (when enabled in settings) ----
+        // Number keys 8/2/4/6 = Up/Down/Left/Right, 7 = Back, 9 = Enter.
+        // These fire regardless of focus when numpad_navigation is enabled.
+        {
+            let numpad_settings = crate::settings::persistence::load();
+            let numpad_on = crate::settings::persistence::get_bool(
+                &numpad_settings, "hotkeys.numpad_navigation", false,
+            );
+            if numpad_on {
+                if let crossterm::event::KeyCode::Char(ch) = key_event.code {
+                    let nav_action = match ch {
+                        '8' => Some(Action::Up),
+                        '2' => Some(Action::Down),
+                        '4' => Some(Action::Left),
+                        '6' => Some(Action::Right),
+                        '7' => Some(Action::Back),
+                        '9' => Some(Action::Enter),
+                        _ => None,
+                    };
+                    if let Some(a) = nav_action {
+                        // Route through the normal action handlers
+                        if state.focus == FocusTarget::Navbar {
+                            match handle_navbar_key(
+                                a, &mut state, &nav_items, &apps_registry, &dashboards,
+                                &mut active_internal_app, &mut active_installed_dash,
+                            ) {
+                                NavResult::Quit => break,
+                                NavResult::Restart => { should_restart = true; break; }
+                                _ => {}
+                            }
+                        } else {
+                            match handle_main_key(a, &mut state, &mut active_internal_app, &mut active_installed_dash) {
+                                MainResult::Quit => break,
+                                MainResult::Restart => { should_restart = true; break; }
+                                _ => {}
+                            }
+                        }
+                        continue;
+                    }
+                }
+            }
+        }
+
+        // ---- Intercept: Hotkey number keys (1-9), any focus, no page/app active ----
+        if state.active_page.is_none()
             && state.active_app.is_none()
             && active_installed_dash.is_none()
         {
@@ -1290,30 +1332,36 @@ fn run_app() -> bool {
                 if ('1'..='9').contains(&ch) {
                     let key_num = ch.to_digit(10).unwrap() as usize;
                     let hotkey_settings = crate::settings::persistence::load();
-                    let path = format!("hotkeys.key_{}", key_num);
-                    if let Some(val) = crate::settings::persistence::get(&hotkey_settings, &path) {
-                        if let Some(action_str) = val.as_str() {
-                            if !action_str.is_empty() && action_str != "None" {
-                                let result = execute_action(
-                                    action_str,
-                                    &mut state,
-                                    &apps_registry,
-                                    &dashboards,
-                                    &mut active_internal_app,
-                                    &mut active_installed_dash,
-                                );
-                                match result {
-                                    NavResult::Quit => break,
-                                    NavResult::Restart => {
-                                        should_restart = true;
-                                        break;
+                    // Skip if numpad navigation is on (those digits are nav keys)
+                    let numpad_on = crate::settings::persistence::get_bool(
+                        &hotkey_settings, "hotkeys.numpad_navigation", false,
+                    );
+                    if !numpad_on || !matches!(ch, '8' | '2' | '4' | '6' | '7' | '9') {
+                        let path = format!("hotkeys.key_{}", key_num);
+                        if let Some(val) = crate::settings::persistence::get(&hotkey_settings, &path) {
+                            if let Some(action_str) = val.as_str() {
+                                if !action_str.is_empty() && action_str != "None" {
+                                    let result = execute_action(
+                                        action_str,
+                                        &mut state,
+                                        &apps_registry,
+                                        &dashboards,
+                                        &mut active_internal_app,
+                                        &mut active_installed_dash,
+                                    );
+                                    match result {
+                                        NavResult::Quit => break,
+                                        NavResult::Restart => {
+                                            should_restart = true;
+                                            break;
+                                        }
+                                        _ => {}
                                     }
-                                    _ => {}
+                                    continue;
                                 }
-                                continue;
                             }
                         }
-                    }
+                    } // end if !numpad_on
                 }
             }
         }

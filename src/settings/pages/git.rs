@@ -23,7 +23,6 @@ pub fn render(frame: &mut Frame, area: Rect, cursor: usize, _scroll: usize, term
 
     let items: Vec<String> = vec![
         "Git Pull".to_string(),
-        "Git Pull & Rebuild".to_string(),
         format!("Run Build Script (build{})", script_ext),
         format!("Run Install Script (install{})", script_ext),
         format!("Run Clone Script (clone{})", script_ext),
@@ -94,7 +93,7 @@ pub fn render(frame: &mut Frame, area: Rect, cursor: usize, _scroll: usize, term
     frame.render_widget(Paragraph::new(term_lines), sections[1]);
 }
 
-pub fn item_count() -> usize { 10 }
+pub fn item_count() -> usize { 9 }
 
 pub fn handle_enter(cursor: usize, ss: &mut SettingsState) {
     let script_dir = std::env::current_dir().unwrap_or_default().join("x");
@@ -111,15 +110,6 @@ pub fn handle_enter(cursor: usize, ss: &mut SettingsState) {
             crate::utilities::logging::settings("Ran Git Pull");
         }
         1 => {
-            // Git Pull & Rebuild
-            ss.terminal_output.push("Running: git pull && cargo build --release".into());
-            let output = run_command("git", &["pull"]);
-            ss.terminal_output.extend(output);
-            let output = run_command("cargo", &["build", "--release"]);
-            ss.terminal_output.extend(output);
-            crate::utilities::logging::settings("Ran Git Pull & Rebuild");
-        }
-        2 => {
             // Run Build Script
             let script = script_dir.join(format!("build.{}", ext));
             ss.terminal_output.push(format!("Running: {}", script.display()));
@@ -127,7 +117,7 @@ pub fn handle_enter(cursor: usize, ss: &mut SettingsState) {
             ss.terminal_output.extend(output);
             crate::utilities::logging::settings("Ran build script");
         }
-        3 => {
+        2 => {
             // Run Install Script
             let script = script_dir.join(format!("install.{}", ext));
             ss.terminal_output.push(format!("Running: {}", script.display()));
@@ -135,7 +125,7 @@ pub fn handle_enter(cursor: usize, ss: &mut SettingsState) {
             ss.terminal_output.extend(output);
             crate::utilities::logging::settings("Ran install script");
         }
-        4 => {
+        3 => {
             // Run Clone Script
             let script = script_dir.join(format!("clone.{}", ext));
             ss.terminal_output.push(format!("Running: {}", script.display()));
@@ -143,7 +133,7 @@ pub fn handle_enter(cursor: usize, ss: &mut SettingsState) {
             ss.terminal_output.extend(output);
             crate::utilities::logging::settings("Ran clone script");
         }
-        5 => {
+        4 => {
             // Run Setup Script
             let script = script_dir.join(format!("setup.{}", ext));
             ss.terminal_output.push(format!("Running: {}", script.display()));
@@ -151,7 +141,7 @@ pub fn handle_enter(cursor: usize, ss: &mut SettingsState) {
             ss.terminal_output.extend(output);
             crate::utilities::logging::settings("Ran setup script");
         }
-        6 => {
+        5 => {
             // Check VNC Viewer Status
             ss.terminal_output.push("Checking VNC status...".into());
             if cfg!(target_os = "linux") {
@@ -161,7 +151,7 @@ pub fn handle_enter(cursor: usize, ss: &mut SettingsState) {
                 ss.terminal_output.push("VNC check is only available on Raspberry Pi.".into());
             }
         }
-        7 => {
+        6 => {
             // Enable VNC Viewer
             ss.terminal_output.push("Enabling VNC Viewer...".into());
             if cfg!(target_os = "linux") {
@@ -174,7 +164,7 @@ pub fn handle_enter(cursor: usize, ss: &mut SettingsState) {
                 ss.terminal_output.push("VNC is only available on Raspberry Pi.".into());
             }
         }
-        8 => {
+        7 => {
             // Disable VNC Viewer
             ss.terminal_output.push("Disabling VNC Viewer...".into());
             if cfg!(target_os = "linux") {
@@ -187,7 +177,7 @@ pub fn handle_enter(cursor: usize, ss: &mut SettingsState) {
                 ss.terminal_output.push("VNC is only available on Raspberry Pi.".into());
             }
         }
-        9 => {
+        8 => {
             // Restore defaults
             let defaults = serde_json::json!({
                 "default_dashboard": "Dashboard-1",
