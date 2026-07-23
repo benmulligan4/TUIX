@@ -2,7 +2,7 @@
 
 use std::io;
 use std::process::Command;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crossterm::{
     event::{self, Event, KeyEventKind},
@@ -145,10 +145,10 @@ fn build_nav_items(
         NavItem {
             label: "System".to_string(),
             content: NavContent::Children(vec![
-                ("⚙️  Settings".to_string(), "page:settings".to_string()),
+                ("Settings".to_string(), "page:settings".to_string()),
                 ("Task Manager".to_string(), "page:taskmanager".to_string()),
                 ("Logs".to_string(), "page:logs".to_string()),
-                ("🌐 Open Git Repo".to_string(), "system:open_repo".to_string()),
+                ("Open Git Repository".to_string(), "system:open_repo".to_string()),
                 ("Restart".to_string(), "system:restart".to_string()),
                 ("Shutdown".to_string(), "system:shutdown".to_string()),
             ]),
@@ -808,6 +808,7 @@ fn execute_action(
         return NavResult::Restart;
     } else if data == "system:open_repo" {
         logging::info("Opening TUIX Git repository");
+        state.popup = Some(("Opening Git Repository...".to_string(), Instant::now()));
         let url = "https://github.com/benmulligan4/TUIX";
         let opened = if cfg!(target_os = "windows") {
             Command::new("cmd").args(["/C", "start", url]).status().is_ok()
@@ -817,6 +818,7 @@ fn execute_action(
             Command::new("xdg-open").arg(url).status().is_ok()
         };
         if !opened {
+            state.popup = Some(("Could not open browser. Visit: https://github.com/benmulligan4/TUIX".to_string(), Instant::now()));
             logging::warn(&format!("Could not open browser. Visit: {}", url));
         }
     }
@@ -831,6 +833,7 @@ fn execute_action(
 enum MainResult {
     None,
     Quit,
+    Restart,
     #[allow(dead_code)]
     RunForeground(Vec<String>),
 }
@@ -869,22 +872,26 @@ fn handle_main_key(
     if action == Action::Back {
         // Settings page handles its own Back (pane switching)
         if matches!(state.active_page.as_deref(), Some("settings")) {
-            // Fall through to settings handler below
+            // Handled in the settings navigation section below — don't return here
         } else if state.active_page.is_some() {
             state.active_page = None;
             state.active_app = None;
+            return MainResult::None;
         } else if state.active_app.is_some() {
             if let Some(app) = active_internal_app {
                 app.stop();
             }
             state.active_app = None;
             *active_internal_app = None;
+            return MainResult::None;
         } else if active_installed_dash.is_some() {
             // Close the installed dashboard and go back to default
             *active_installed_dash = None;
             state.active_dashboard = "Dashboard-1".to_string();
+            return MainResult::None;
+        } else {
+            return MainResult::None;
         }
-        return MainResult::None;
     }
 
     // Forward keys to installed dashboard if active
@@ -958,7 +965,11 @@ fn handle_main_key(
                     }
                 }
                 Action::Enter => {
-                    settings::page::handle_right_pane_enter(ss);
+                    match settings::page::handle_right_pane_enter(ss) {
+                        settings::page::SettingsAction::Quit => return MainResult::Quit,
+                        settings::page::SettingsAction::Restart => return MainResult::Restart,
+                        settings::page::SettingsAction::None => {}
+                    }
                 }
                 Action::Back => {
                     ss.in_right_pane = false;
@@ -1090,8 +1101,36 @@ fn run_app() -> bool {
                 if state.nav_expanded {
                     render_dropdown(frame, rows[1], &nav_items, &state);
                 }
+
+                // 4. Draw popup notification if active
+                if let Some((ref msg, ref created)) = state.popup {
+                    if created.elapsed() < Duration::from_secs(3) {
+                        let popup_width = (msg.len() + 4) as u16;
+                        let area = frame.area();
+                        let popup_rect = Rect {
+                            x: area.width.saturating_sub(popup_width) / 2,
+                            y: area.height / 2,
+                            width: popup_width.min(area.width),
+                            height: 3,
+                        };
+                        frame.render_widget(Clear, popup_rect);
+                        frame.render_widget(
+                            Paragraph::new(Text::raw(format!("  {}  ", msg)))
+                                .style(Style::default().fg(Color::White).bg(Color::DarkGray))
+                                .block(Block::default().borders(Borders::ALL).style(Style::default().bg(Color::DarkGray))),
+                            popup_rect,
+                        );
+                    }
+                }
             })
             .expect("Failed to draw frame");
+
+        // Clear expired popup
+        if let Some((_, created)) = &state.popup {
+            if created.elapsed() >= Duration::from_secs(3) {
+                state.popup = None;
+            }
+        }
 
         // Poll for events with timeout
         if !event::poll(Duration::from_millis(100)).unwrap_or(false) {
@@ -1171,6 +1210,10 @@ fn run_app() -> bool {
         } else {
             match handle_main_key(action, &mut state, &mut active_internal_app, &mut active_installed_dash) {
                 MainResult::Quit => break,
+                MainResult::Restart => {
+                    should_restart = true;
+                    break;
+                }
                 MainResult::RunForeground(cmd) => {
                     disable_raw_mode().ok();
                     execute!(terminal.backend_mut(), LeaveAlternateScreen).ok();

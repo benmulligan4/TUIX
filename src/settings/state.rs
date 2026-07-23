@@ -11,7 +11,6 @@ pub enum SettingsCategory {
     Hotkeys,
     Git,
     Utilities,
-    Scripts,
     Power,
 }
 
@@ -26,23 +25,21 @@ impl SettingsCategory {
         SettingsCategory::Hotkeys,
         SettingsCategory::Git,
         SettingsCategory::Utilities,
-        SettingsCategory::Scripts,
         SettingsCategory::Power,
     ];
 
     pub fn label(&self) -> &'static str {
         match self {
-            SettingsCategory::About => "ℹ️  About TUIX",
-            SettingsCategory::WifiBluetooth => "📶 WiFi & Bluetooth",
-            SettingsCategory::Audio => "🔊 Audio",
-            SettingsCategory::Display => "🖥  Display",
-            SettingsCategory::Appearance => "🎨 Appearance",
-            SettingsCategory::ButtonMapping => "⌨️  Button Mapping",
-            SettingsCategory::Hotkeys => "⚡ Hotkeys",
-            SettingsCategory::Git => "🔄 Updates & Git",
-            SettingsCategory::Utilities => "🛠  Utilities",
-            SettingsCategory::Scripts => "📜 Scripts",
-            SettingsCategory::Power => "⏻  Power",
+            SettingsCategory::About => "About TUIX",
+            SettingsCategory::WifiBluetooth => "WiFi & Bluetooth",
+            SettingsCategory::Audio => "Audio",
+            SettingsCategory::Display => "Display",
+            SettingsCategory::Appearance => "Appearance",
+            SettingsCategory::ButtonMapping => "Button Mapping",
+            SettingsCategory::Hotkeys => "Hotkeys",
+            SettingsCategory::Git => "Scripts & Git",
+            SettingsCategory::Utilities => "Utilities",
+            SettingsCategory::Power => "Power",
         }
     }
 

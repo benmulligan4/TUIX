@@ -12,7 +12,7 @@ use ratatui::{
 };
 
 use super::pages::{
-    about, appearance, audio, button_mapping, display, git, hotkeys, power, scripts, utilities,
+    about, appearance, audio, button_mapping, display, git, hotkeys, power, utilities,
     wifi_bluetooth,
 };
 use super::state::{SettingsCategory, SettingsState};
@@ -123,7 +123,6 @@ pub fn render(frame: &mut Frame, area: Rect, border_style: Style, ss: &mut Setti
         SettingsCategory::Hotkeys => hotkeys::render(frame, content_area, cursor, scroll),
         SettingsCategory::Git => git::render(frame, content_area, cursor, scroll),
         SettingsCategory::Utilities => utilities::render(frame, content_area, cursor, scroll),
-        SettingsCategory::Scripts => scripts::render(frame, content_area, cursor, scroll),
         SettingsCategory::Power => power::render(frame, content_area, cursor, scroll),
     }
 }
@@ -140,23 +139,28 @@ pub fn current_item_count(ss: &SettingsState) -> usize {
         SettingsCategory::Hotkeys => hotkeys::item_count(),
         SettingsCategory::Git => git::item_count(),
         SettingsCategory::Utilities => utilities::item_count(),
-        SettingsCategory::Scripts => scripts::item_count(),
         SettingsCategory::Power => power::item_count(),
     }
 }
 
+/// Result from a settings Enter action.
+pub enum SettingsAction {
+    None,
+    Quit,
+    Restart,
+}
+
 /// Handle Enter press in the right pane.
-pub fn handle_right_pane_enter(ss: &SettingsState) {
+pub fn handle_right_pane_enter(ss: &SettingsState) -> SettingsAction {
     let cursor = ss.right_cursor;
     match ss.selected_category() {
-        SettingsCategory::Display => display::handle_enter(cursor),
-        SettingsCategory::Appearance => appearance::handle_enter(cursor),
-        SettingsCategory::ButtonMapping => button_mapping::handle_enter(cursor),
-        SettingsCategory::Hotkeys => hotkeys::handle_enter(cursor),
-        SettingsCategory::Git => git::handle_enter(cursor),
-        SettingsCategory::Utilities => utilities::handle_enter(cursor),
-        SettingsCategory::Scripts => scripts::handle_enter(cursor),
-        // About, WiFi, Audio, Power — no enter action or handled separately
-        _ => {}
+        SettingsCategory::Display => { display::handle_enter(cursor); SettingsAction::None }
+        SettingsCategory::Appearance => { appearance::handle_enter(cursor); SettingsAction::None }
+        SettingsCategory::ButtonMapping => { button_mapping::handle_enter(cursor); SettingsAction::None }
+        SettingsCategory::Hotkeys => { hotkeys::handle_enter(cursor); SettingsAction::None }
+        SettingsCategory::Git => { git::handle_enter(cursor); SettingsAction::None }
+        SettingsCategory::Utilities => { utilities::handle_enter(cursor); SettingsAction::None }
+        SettingsCategory::Power => power::handle_enter(cursor),
+        _ => SettingsAction::None,
     }
 }

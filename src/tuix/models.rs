@@ -1,6 +1,7 @@
 /// TUIX — shared enums, structs, and state containers.
 
 use chrono::{DateTime, Utc};
+use std::time::Instant;
 
 use crate::settings::state::SettingsState;
 
@@ -61,6 +62,8 @@ pub struct TuixState {
     pub log_scroll: usize,
     /// Settings page UI state.
     pub settings: SettingsState,
+    /// Temporary popup message (text, when it was set).
+    pub popup: Option<(String, Instant)>,
 }
 
 impl TuixState {
@@ -77,6 +80,7 @@ impl TuixState {
             dropdown_cursor: 0,
             log_scroll: 0,
             settings: SettingsState::new(),
+            popup: None,
         }
     }
 }

@@ -6,6 +6,5 @@ pub mod display;
 pub mod git;
 pub mod hotkeys;
 pub mod power;
-pub mod scripts;
 pub mod utilities;
 pub mod wifi_bluetooth;

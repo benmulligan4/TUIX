@@ -44,3 +44,21 @@ pub fn render(frame: &mut Frame, area: Rect, cursor: usize, _scroll: usize) {
 }
 
 pub fn item_count() -> usize { 3 }
+
+pub fn handle_enter(cursor: usize) -> crate::settings::page::SettingsAction {
+    use crate::settings::page::SettingsAction;
+    match cursor {
+        0 => SettingsAction::Quit,    // Shut Down TUIX
+        1 => SettingsAction::Restart, // Restart TUIX
+        2 => {
+            // Shut Down Raspberry Pi
+            if cfg!(target_os = "linux") {
+                let _ = std::process::Command::new("sudo")
+                    .args(["shutdown", "-h", "now"])
+                    .status();
+            }
+            SettingsAction::Quit
+        }
+        _ => SettingsAction::None,
+    }
+}
