@@ -73,24 +73,29 @@ pub fn handle_enter(cursor: usize) {
             let idx = ACCENT_COLORS.iter().position(|&c| c == current).unwrap_or(0);
             let next = ACCENT_COLORS[(idx + 1) % ACCENT_COLORS.len()];
             persistence::set(&mut settings, "appearance.accent_color", serde_json::Value::String(next.to_string()));
+            crate::utilities::logging::settings(&format!("TUIX Colour changed to {}", next));
         }
         1 => {
             let current = persistence::get_bool(&settings, "appearance.clock_enabled", false);
             persistence::set(&mut settings, "appearance.clock_enabled", serde_json::Value::Bool(!current));
+            crate::utilities::logging::settings(&format!("Clock {}", if !current { "enabled" } else { "disabled" }));
         }
         2 => {
             let current = persistence::get_bool(&settings, "appearance.clock_format_24h", true);
             persistence::set(&mut settings, "appearance.clock_format_24h", serde_json::Value::Bool(!current));
+            crate::utilities::logging::settings(&format!("Clock format set to {}", if !current { "24h" } else { "12h" }));
         }
         3 => {
             let current = persistence::get_bool(&settings, "appearance.clock_show_seconds", false);
             persistence::set(&mut settings, "appearance.clock_show_seconds", serde_json::Value::Bool(!current));
+            crate::utilities::logging::settings(&format!("Clock seconds {}", if !current { "shown" } else { "hidden" }));
         }
         4 => {
             let current = persistence::get_str(&settings, "appearance.font", "Default");
             let idx = FONT_OPTIONS.iter().position(|&f| f == current).unwrap_or(0);
             let next = FONT_OPTIONS[(idx + 1) % FONT_OPTIONS.len()];
             persistence::set(&mut settings, "appearance.font", serde_json::Value::String(next.to_string()));
+            crate::utilities::logging::settings(&format!("Font changed to {}", next));
         }
         5 => {
             let dash_names = persistence::load_dashboard_names();
@@ -99,6 +104,7 @@ pub fn handle_enter(cursor: usize) {
                 let idx = dash_names.iter().position(|d| d == &current).unwrap_or(0);
                 let next = &dash_names[(idx + 1) % dash_names.len()];
                 persistence::set(&mut settings, "default_dashboard", serde_json::Value::String(next.clone()));
+                crate::utilities::logging::settings(&format!("Default dashboard changed to {}", next));
             }
         }
         _ => {}

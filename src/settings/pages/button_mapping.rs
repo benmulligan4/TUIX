@@ -59,5 +59,6 @@ pub fn capture_key(ss: &mut SettingsState, key_name: &str) {
         serde_json::Value::String(key_name.to_string()),
     );
     persistence::save(&settings);
+    crate::utilities::logging::settings(&format!("Nav/Main toggle key set to {}", key_name));
     ss.awaiting_key = false;
 }

@@ -78,6 +78,7 @@ pub fn handle_enter(cursor: usize) {
         let current = persistence::get_bool(&settings, "hotkeys.numpad_navigation", false);
         persistence::set(&mut settings, "hotkeys.numpad_navigation", serde_json::Value::Bool(!current));
         persistence::save(&settings);
+        crate::utilities::logging::settings(&format!("Numpad navigation {}", if !current { "enabled" } else { "disabled" }));
         return;
     }
 
@@ -109,4 +110,5 @@ pub fn handle_enter(cursor: usize) {
     };
     persistence::set(&mut settings, &path, value);
     persistence::save(&settings);
+    crate::utilities::logging::settings(&format!("Hotkey {} set to {}", key_num, next));
 }

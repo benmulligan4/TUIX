@@ -53,12 +53,14 @@ pub fn handle_enter(cursor: usize) {
             let next = TIMEOUT_OPTIONS[(idx + 1) % TIMEOUT_OPTIONS.len()];
             persistence::set(&mut settings, "display.screen_timeout", serde_json::Value::String(next.to_string()));
             persistence::save(&settings);
+            crate::utilities::logging::settings(&format!("Screen timeout set to {}", next));
         }
         1 => {
             // Toggle fullscreen
             let current = persistence::get_bool(&settings, "display.fullscreen", false);
             persistence::set(&mut settings, "display.fullscreen", serde_json::Value::Bool(!current));
             persistence::save(&settings);
+            crate::utilities::logging::settings(&format!("Fullscreen {}", if !current { "enabled" } else { "disabled" }));
         }
         _ => {}
     }

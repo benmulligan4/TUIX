@@ -50,11 +50,13 @@ pub fn handle_enter(cursor: usize) -> bool {
             let current = persistence::get_bool(&settings, "utilities.onscreen_keyboard_enabled", true);
             persistence::set(&mut settings, "utilities.onscreen_keyboard_enabled", serde_json::Value::Bool(!current));
             persistence::save(&settings);
+            crate::utilities::logging::settings(&format!("On-Screen Keyboard {}", if !current { "enabled" } else { "disabled" }));
             false
         }
         1 => {
             // Clear logs — truncate tuix.log
             let _ = std::fs::write("tuix.log", "");
+            crate::utilities::logging::settings("Logs cleared");
             true // Signal popup
         }
         _ => false,

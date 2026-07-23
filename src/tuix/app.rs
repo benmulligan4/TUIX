@@ -500,6 +500,15 @@ fn render_logs_page(frame: &mut Frame, area: Rect, state: &TuixState, border_sty
                     Span::styled(tag, Style::default().fg(Color::Magenta)),
                     Span::styled(after.to_string(), Style::default().fg(Color::White)),
                 ])
+            } else if let Some(start) = line.find("[SETTINGS]") {
+                let before = &line[..start];
+                let tag = "[SETTINGS]";
+                let after = &line[start + tag.len()..];
+                Line::from(vec![
+                    Span::styled(format!("  {}", before), Style::default().fg(Color::White)),
+                    Span::styled(tag, Style::default().fg(Color::Green)),
+                    Span::styled(after.to_string(), Style::default().fg(Color::White)),
+                ])
             } else {
                 Line::from(Span::styled(
                     format!("  {}", line),
