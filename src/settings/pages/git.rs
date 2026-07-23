@@ -29,6 +29,8 @@ pub fn render(frame: &mut Frame, area: Rect, cursor: usize, _scroll: usize, term
         format!("Run Clone Script (clone{})", script_ext),
         format!("Run Setup Script (setup{})", script_ext),
         "Check VNC Viewer Status".to_string(),
+        "Enable VNC Viewer".to_string(),
+        "Disable VNC Viewer".to_string(),
         "Restore TUIX Settings to Default".to_string(),
     ];
 
@@ -92,7 +94,7 @@ pub fn render(frame: &mut Frame, area: Rect, cursor: usize, _scroll: usize, term
     frame.render_widget(Paragraph::new(term_lines), sections[1]);
 }
 
-pub fn item_count() -> usize { 8 }
+pub fn item_count() -> usize { 10 }
 
 pub fn handle_enter(cursor: usize, ss: &mut SettingsState) {
     let script_dir = std::env::current_dir().unwrap_or_default().join("x");
@@ -160,6 +162,32 @@ pub fn handle_enter(cursor: usize, ss: &mut SettingsState) {
             }
         }
         7 => {
+            // Enable VNC Viewer
+            ss.terminal_output.push("Enabling VNC Viewer...".into());
+            if cfg!(target_os = "linux") {
+                let output = run_command("sudo", &["systemctl", "enable", "vncserver-x11-serviced"]);
+                ss.terminal_output.extend(output);
+                let output = run_command("sudo", &["systemctl", "start", "vncserver-x11-serviced"]);
+                ss.terminal_output.extend(output);
+                crate::utilities::logging::settings("VNC Viewer enabled");
+            } else {
+                ss.terminal_output.push("VNC is only available on Raspberry Pi.".into());
+            }
+        }
+        8 => {
+            // Disable VNC Viewer
+            ss.terminal_output.push("Disabling VNC Viewer...".into());
+            if cfg!(target_os = "linux") {
+                let output = run_command("sudo", &["systemctl", "stop", "vncserver-x11-serviced"]);
+                ss.terminal_output.extend(output);
+                let output = run_command("sudo", &["systemctl", "disable", "vncserver-x11-serviced"]);
+                ss.terminal_output.extend(output);
+                crate::utilities::logging::settings("VNC Viewer disabled");
+            } else {
+                ss.terminal_output.push("VNC is only available on Raspberry Pi.".into());
+            }
+        }
+        9 => {
             // Restore defaults
             let defaults = serde_json::json!({
                 "default_dashboard": "Dashboard-1",

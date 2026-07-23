@@ -21,7 +21,7 @@ pub fn render(frame: &mut Frame, area: Rect, cursor: usize, _scroll: usize) {
 
     let items: Vec<(&str, String)> = vec![
         ("Screen Timeout", timeout),
-        ("Fullscreen", if fullscreen { "Enabled".into() } else { "Disabled".into() }),
+        ("Fullscreen (coming soon)", if fullscreen { "Enabled".into() } else { "Disabled".into() }),
     ];
 
     let mut lines: Vec<Line> = Vec::new();
