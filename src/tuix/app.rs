@@ -638,11 +638,7 @@ fn handle_navbar_key(
     active_internal_app: &mut Option<InternalApp>,
     active_installed_dash: &mut Option<InstalledDashboard>,
 ) -> NavResult {
-    if action == Action::Tab {
-        state.focus = FocusTarget::Main;
-        state.nav_expanded = false;
-        return NavResult::None;
-    }
+    // Tab focus toggle is now handled at the raw event level
 
     if action == Action::Quit {
         return NavResult::Quit;
@@ -893,10 +889,8 @@ fn handle_main_key(
         return MainResult::Quit;
     }
 
-    if action == Action::Tab {
-        state.focus = FocusTarget::Navbar;
-        return MainResult::None;
-    }
+    // Tab focus toggle is now handled at the raw event level
+    // using the configured toggle key. Don't handle Action::Tab here.
 
     // If an internal app has its OSK active, forward ALL mapped keys to it
     // (including Back/Q which normally closes the app — the OSK handles
@@ -996,21 +990,7 @@ fn handle_main_key(
     if matches!(state.active_page.as_deref(), Some("settings")) {
         let ss = &mut state.settings;
 
-        // Key capture mode for button mapping
-        if ss.awaiting_key {
-            let key_name = match action {
-                Action::Tab => "Tab",
-                Action::Enter => "Enter",
-                Action::Up => "Up",
-                Action::Down => "Down",
-                Action::Left => "Left",
-                Action::Right => "Right",
-                Action::Back => "Q",
-                Action::Quit => "Esc",
-            };
-            crate::settings::pages::button_mapping::capture_key(ss, key_name);
-            return MainResult::None;
-        }
+        // Key capture mode is now handled at the raw event level
 
         if ss.in_right_pane {
             // In right pane — navigate settings items
@@ -1133,10 +1113,36 @@ fn run_app() -> bool {
         .unwrap_or("Dashboard-1")
         .to_string();
 
-    let mut state = TuixState::new(default_dashboard);
+    let mut state = TuixState::new(default_dashboard.clone());
     let nav_items = build_nav_items(&dashboards, &apps_registry);
     let mut active_internal_app: Option<InternalApp> = None;
     let mut active_installed_dash: Option<InstalledDashboard> = None;
+
+    // Auto-launch default dashboard if it's an installed (third-party) one
+    if let Some(meta) = dashboards.get(&default_dashboard) {
+        let dash_type = meta.get("type").and_then(|t| t.as_str()).unwrap_or("");
+        if dash_type == "installed" {
+            let source = meta.get("source").and_then(|s| s.as_str()).unwrap_or("global");
+            let cmd: Vec<String> = if source == "local" {
+                let local_bin = format!("downloads/dashboards/{}/target/release/{}", default_dashboard, default_dashboard);
+                if std::path::Path::new(&local_bin).exists() {
+                    vec![local_bin]
+                } else {
+                    meta.get("cmd").and_then(|c| c.as_array())
+                        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+                        .unwrap_or_default()
+                }
+            } else {
+                meta.get("cmd").and_then(|c| c.as_array())
+                    .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+                    .unwrap_or_default()
+            };
+            let label = meta.get("label").and_then(|v| v.as_str()).unwrap_or(&default_dashboard).to_string();
+            if !cmd.is_empty() {
+                active_installed_dash = InstalledDashboard::start(&default_dashboard, &label, &cmd, 80, 24);
+            }
+        }
+    }
 
     let mut should_restart = false;
 
@@ -1212,6 +1218,105 @@ fn run_app() -> bool {
             Event::Key(key) if key.kind == KeyEventKind::Press => key,
             _ => continue,
         };
+
+        // ---- Intercept: Settings awaiting_key mode (captures ANY key) ----
+        if state.focus == FocusTarget::Main
+            && matches!(state.active_page.as_deref(), Some("settings"))
+            && state.settings.awaiting_key
+        {
+            let key_name = match key_event.code {
+                crossterm::event::KeyCode::Tab => "Tab",
+                crossterm::event::KeyCode::Enter => "Enter",
+                crossterm::event::KeyCode::Esc => "Esc",
+                crossterm::event::KeyCode::Backspace => "Backspace",
+                crossterm::event::KeyCode::Up => "Up",
+                crossterm::event::KeyCode::Down => "Down",
+                crossterm::event::KeyCode::Left => "Left",
+                crossterm::event::KeyCode::Right => "Right",
+                crossterm::event::KeyCode::Char(ch) => {
+                    match ch {
+                        'a' => "A", 'b' => "B", 'c' => "C", 'd' => "D",
+                        'e' => "E", 'f' => "F", 'g' => "G", 'h' => "H",
+                        'i' => "I", 'j' => "J", 'k' => "K", 'l' => "L",
+                        'm' => "M", 'n' => "N", 'o' => "O", 'p' => "P",
+                        'q' => "Q", 'r' => "R", 's' => "S", 't' => "T",
+                        'u' => "U", 'v' => "V", 'w' => "W", 'x' => "X",
+                        'y' => "Y", 'z' => "Z", '0' => "0", '1' => "1",
+                        '2' => "2", '3' => "3", '4' => "4", '5' => "5",
+                        '6' => "6", '7' => "7", '8' => "8", '9' => "9",
+                        _ => "Tab",
+                    }
+                }
+                _ => "Tab",
+            };
+            crate::settings::pages::button_mapping::capture_key(&mut state.settings, key_name);
+            continue;
+        }
+
+        // ---- Helper: check if key matches configured focus toggle key ----
+        let toggle_key_name = {
+            let s = crate::settings::persistence::load();
+            crate::settings::persistence::get_str(&s, "button_mapping.focus_toggle_key", "Tab")
+        };
+        let is_toggle_key = match key_event.code {
+            crossterm::event::KeyCode::Tab => toggle_key_name == "Tab",
+            crossterm::event::KeyCode::Enter => toggle_key_name == "Enter",
+            crossterm::event::KeyCode::Esc => toggle_key_name == "Esc",
+            crossterm::event::KeyCode::Backspace => toggle_key_name == "Backspace",
+            crossterm::event::KeyCode::Char(ch) => {
+                let upper: String = ch.to_uppercase().collect();
+                upper == toggle_key_name
+            }
+            _ => false,
+        };
+
+        // If the configured toggle key is pressed, switch focus
+        if is_toggle_key {
+            state.focus = match state.focus {
+                FocusTarget::Navbar => FocusTarget::Main,
+                FocusTarget::Main => FocusTarget::Navbar,
+            };
+            state.nav_expanded = false;
+            continue;
+        }
+
+        // ---- Intercept: Hotkey number keys (1-9) when no page/app active ----
+        if state.focus == FocusTarget::Main
+            && state.active_page.is_none()
+            && state.active_app.is_none()
+            && active_installed_dash.is_none()
+        {
+            if let crossterm::event::KeyCode::Char(ch) = key_event.code {
+                if ('1'..='9').contains(&ch) {
+                    let key_num = ch.to_digit(10).unwrap() as usize;
+                    let hotkey_settings = crate::settings::persistence::load();
+                    let path = format!("hotkeys.key_{}", key_num);
+                    if let Some(val) = crate::settings::persistence::get(&hotkey_settings, &path) {
+                        if let Some(action_str) = val.as_str() {
+                            if !action_str.is_empty() && action_str != "None" {
+                                let result = execute_action(
+                                    action_str,
+                                    &mut state,
+                                    &apps_registry,
+                                    &dashboards,
+                                    &mut active_internal_app,
+                                    &mut active_installed_dash,
+                                );
+                                match result {
+                                    NavResult::Quit => break,
+                                    NavResult::Restart => {
+                                        should_restart = true;
+                                        break;
+                                    }
+                                    _ => {}
+                                }
+                                continue;
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         // When an installed dashboard is active and main is focused,
         // forward raw key events directly to the PTY subprocess.
