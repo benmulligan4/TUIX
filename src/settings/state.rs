@@ -74,6 +74,8 @@ pub struct SettingsState {
     pub right_scroll: usize,
     /// When true, the next key press will be captured as a button mapping.
     pub awaiting_key: bool,
+    /// Terminal output from script execution (cleared on category switch).
+    pub terminal_output: Vec<String>,
 }
 
 impl SettingsState {
@@ -84,6 +86,7 @@ impl SettingsState {
             right_cursor: 0,
             right_scroll: 0,
             awaiting_key: false,
+            terminal_output: Vec::new(),
         }
     }
 
@@ -96,5 +99,6 @@ impl SettingsState {
     pub fn reset_right_pane(&mut self) {
         self.right_cursor = 0;
         self.right_scroll = 0;
+        self.terminal_output.clear();
     }
 }

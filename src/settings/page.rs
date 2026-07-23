@@ -122,7 +122,7 @@ pub fn render(frame: &mut Frame, area: Rect, border_style: Style, ss: &mut Setti
             button_mapping::render(frame, content_area, cursor, scroll, ss.awaiting_key)
         }
         SettingsCategory::Hotkeys => hotkeys::render(frame, content_area, cursor, scroll),
-        SettingsCategory::Git => git::render(frame, content_area, cursor, scroll),
+        SettingsCategory::Git => git::render(frame, content_area, cursor, scroll, &ss.terminal_output),
         SettingsCategory::Utilities => utilities::render(frame, content_area, cursor, scroll),
         SettingsCategory::Power => power::render(frame, content_area, cursor, scroll),
     }
@@ -160,7 +160,7 @@ pub fn handle_right_pane_enter(ss: &mut SettingsState) -> SettingsAction {
         SettingsCategory::Appearance => { appearance::handle_enter(cursor); SettingsAction::None }
         SettingsCategory::ButtonMapping => { button_mapping::handle_enter(ss); SettingsAction::None }
         SettingsCategory::Hotkeys => { hotkeys::handle_enter(cursor); SettingsAction::None }
-        SettingsCategory::Git => { git::handle_enter(cursor); SettingsAction::None }
+        SettingsCategory::Git => { git::handle_enter(cursor, ss); SettingsAction::None }
         SettingsCategory::Utilities => {
             if utilities::handle_enter(cursor) {
                 SettingsAction::ShowPopup("Logs cleared.".to_string())

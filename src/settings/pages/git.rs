@@ -1,4 +1,4 @@
-/// Scripts & Git settings — run scripts, pull, rebuild.
+/// Scripts & Git settings — run scripts, pull, rebuild, restore defaults.
 
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
@@ -8,7 +8,9 @@ use ratatui::{
     Frame,
 };
 
-pub fn render(frame: &mut Frame, area: Rect, cursor: usize, _scroll: usize) {
+use crate::settings::state::SettingsState;
+
+pub fn render(frame: &mut Frame, area: Rect, cursor: usize, _scroll: usize, terminal_output: &[String]) {
     let branch = std::process::Command::new("git")
         .args(["rev-parse", "--abbrev-ref", "HEAD"])
         .output()
@@ -27,6 +29,7 @@ pub fn render(frame: &mut Frame, area: Rect, cursor: usize, _scroll: usize) {
         format!("Run Clone Script (clone{})", script_ext),
         format!("Run Setup Script (setup{})", script_ext),
         "Check VNC Viewer Status".to_string(),
+        "Restore TUIX Settings to Default".to_string(),
     ];
 
     let value_style = Style::default().fg(Color::White);
@@ -66,21 +69,158 @@ pub fn render(frame: &mut Frame, area: Rect, cursor: usize, _scroll: usize) {
     frame.render_widget(Paragraph::new(lines), sections[0]);
 
     // Terminal output area (read-only)
-    let term_lines: Vec<Line> = vec![
-        Line::from(Span::styled(
-            "  ─── Terminal Output ───",
-            label_style,
-        )),
-        Line::from(Span::styled(
+    let mut term_lines: Vec<Line> = Vec::new();
+    term_lines.push(Line::from(Span::styled(
+        "  ─── Terminal Output ───",
+        label_style,
+    )));
+
+    if terminal_output.is_empty() {
+        term_lines.push(Line::from(Span::styled(
             "  (Run a script to see output here)",
             Style::default().fg(Color::DarkGray),
-        )),
-    ];
+        )));
+    } else {
+        for line in terminal_output {
+            term_lines.push(Line::from(Span::styled(
+                format!("  {}", line),
+                Style::default().fg(Color::White),
+            )));
+        }
+    }
+
     frame.render_widget(Paragraph::new(term_lines), sections[1]);
 }
 
-pub fn item_count() -> usize { 7 }
+pub fn item_count() -> usize { 8 }
 
-pub fn handle_enter(_cursor: usize) {
-    // Script/git execution — subprocess output capture to be implemented
+pub fn handle_enter(cursor: usize, ss: &mut SettingsState) {
+    let script_dir = std::env::current_dir().unwrap_or_default().join("x");
+    let ext = if cfg!(target_os = "windows") { "bat" } else { "sh" };
+
+    ss.terminal_output.clear();
+
+    match cursor {
+        0 => {
+            // Git Pull
+            ss.terminal_output.push("Running: git pull".into());
+            let output = run_command("git", &["pull"]);
+            ss.terminal_output.extend(output);
+            crate::utilities::logging::settings("Ran Git Pull");
+        }
+        1 => {
+            // Git Pull & Rebuild
+            ss.terminal_output.push("Running: git pull && cargo build --release".into());
+            let output = run_command("git", &["pull"]);
+            ss.terminal_output.extend(output);
+            let output = run_command("cargo", &["build", "--release"]);
+            ss.terminal_output.extend(output);
+            crate::utilities::logging::settings("Ran Git Pull & Rebuild");
+        }
+        2 => {
+            // Run Build Script
+            let script = script_dir.join(format!("build.{}", ext));
+            ss.terminal_output.push(format!("Running: {}", script.display()));
+            let output = run_script(&script);
+            ss.terminal_output.extend(output);
+            crate::utilities::logging::settings("Ran build script");
+        }
+        3 => {
+            // Run Install Script
+            let script = script_dir.join(format!("install.{}", ext));
+            ss.terminal_output.push(format!("Running: {}", script.display()));
+            let output = run_script(&script);
+            ss.terminal_output.extend(output);
+            crate::utilities::logging::settings("Ran install script");
+        }
+        4 => {
+            // Run Clone Script
+            let script = script_dir.join(format!("clone.{}", ext));
+            ss.terminal_output.push(format!("Running: {}", script.display()));
+            let output = run_script(&script);
+            ss.terminal_output.extend(output);
+            crate::utilities::logging::settings("Ran clone script");
+        }
+        5 => {
+            // Run Setup Script
+            let script = script_dir.join(format!("setup.{}", ext));
+            ss.terminal_output.push(format!("Running: {}", script.display()));
+            let output = run_script(&script);
+            ss.terminal_output.extend(output);
+            crate::utilities::logging::settings("Ran setup script");
+        }
+        6 => {
+            // Check VNC Viewer Status
+            ss.terminal_output.push("Checking VNC status...".into());
+            if cfg!(target_os = "linux") {
+                let output = run_command("systemctl", &["status", "vncserver-x11-serviced"]);
+                ss.terminal_output.extend(output);
+            } else {
+                ss.terminal_output.push("VNC check is only available on Raspberry Pi.".into());
+            }
+        }
+        7 => {
+            // Restore defaults
+            let defaults = serde_json::json!({
+                "default_dashboard": "Dashboard-1",
+                "theme": "default",
+                "appearance": {
+                    "accent_color": "Cyan",
+                    "clock_enabled": false,
+                    "clock_format_24h": true,
+                    "clock_show_seconds": false,
+                    "font": "Default"
+                },
+                "display": {
+                    "screen_timeout": "Never",
+                    "fullscreen": false
+                },
+                "hotkeys": {
+                    "numpad_navigation": false
+                },
+                "button_mapping": {
+                    "focus_toggle_key": "Tab"
+                },
+                "utilities": {
+                    "onscreen_keyboard_enabled": true
+                }
+            });
+            crate::settings::persistence::save(&defaults);
+            ss.terminal_output.push("Settings restored to defaults.".into());
+            crate::utilities::logging::settings("Settings restored to defaults");
+        }
+        _ => {}
+    }
+}
+
+fn run_command(program: &str, args: &[&str]) -> Vec<String> {
+    match std::process::Command::new(program).args(args).output() {
+        Ok(output) => {
+            let mut lines = Vec::new();
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            for line in stdout.lines() {
+                lines.push(line.to_string());
+            }
+            for line in stderr.lines() {
+                lines.push(format!("[err] {}", line));
+            }
+            if lines.is_empty() {
+                lines.push("(no output)".into());
+            }
+            lines
+        }
+        Err(e) => vec![format!("Error: {}", e)],
+    }
+}
+
+fn run_script(path: &std::path::Path) -> Vec<String> {
+    if !path.exists() {
+        return vec![format!("Script not found: {}", path.display())];
+    }
+    if cfg!(target_os = "windows") {
+        run_command("cmd", &["/C", &path.to_string_lossy()])
+    } else {
+        run_command("bash", &[&path.to_string_lossy()])
+    }
 }

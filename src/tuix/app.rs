@@ -1237,6 +1237,39 @@ fn run_app() -> bool {
             }
         }
 
+        // When text editor is in typing_mode, forward raw character keys directly
+        if state.focus == FocusTarget::Main {
+            if let Some(InternalApp::TextEditor(ref mut editor)) = active_internal_app {
+                if editor.typing_mode {
+                    match key_event.code {
+                        crossterm::event::KeyCode::Char(ch) => {
+                            editor.insert_char(ch);
+                            continue;
+                        }
+                        crossterm::event::KeyCode::Backspace => {
+                            editor.backspace();
+                            continue;
+                        }
+                        crossterm::event::KeyCode::Esc => {
+                            editor.typing_mode = false;
+                            continue;
+                        }
+                        crossterm::event::KeyCode::Enter => {
+                            editor.insert_newline();
+                            continue;
+                        }
+                        crossterm::event::KeyCode::Tab => {
+                            state.focus = FocusTarget::Navbar;
+                            continue;
+                        }
+                        _ => {
+                            // Let arrow keys etc. go through map_key below
+                        }
+                    }
+                }
+            }
+        }
+
         let action = match map_key(key_event) {
             Some(a) => a,
             None => continue,
