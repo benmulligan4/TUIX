@@ -135,17 +135,16 @@ fn build_nav_items(
             content: NavContent::Children(app_children),
         },
         NavItem {
-            label: "Settings".to_string(),
-            content: NavContent::Direct("page:settings".to_string()),
-        },
-        NavItem {
             label: "Touchscreen".to_string(),
             content: NavContent::Direct("page:touchscreen".to_string()),
         },
         NavItem {
+            label: "Settings".to_string(),
+            content: NavContent::Direct("page:settings".to_string()),
+        },
+        NavItem {
             label: "System".to_string(),
             content: NavContent::Children(vec![
-                ("Settings".to_string(), "page:settings".to_string()),
                 ("Task Manager".to_string(), "page:taskmanager".to_string()),
                 ("Logs".to_string(), "page:logs".to_string()),
                 ("Open Git Repository".to_string(), "system:open_repo".to_string()),
