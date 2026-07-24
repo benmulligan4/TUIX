@@ -10,19 +10,53 @@ use ratatui::{
 
 use crate::settings::persistence;
 
-const ACCENT_COLORS: &[&str] = &["Cyan", "Green", "Yellow", "Blue", "Magenta", "Red", "White"];
+const ACCENT_COLORS: &[&str] = &[
+    "Cyan", "Green", "Yellow", "Blue", "Magenta", "Red", "White",
+    "Light Blue", "Orange", "Pink", "Teal", "Purple", "Gold", "Grey", "Rainbow",
+];
 
 /// Convert a colour name string to a ratatui Color.
+/// "Rainbow" animates through the spectrum on every call.
 pub fn color_from_name(name: &str) -> Color {
     match name {
-        "Cyan" => Color::Cyan,
-        "Green" => Color::Green,
-        "Yellow" => Color::Yellow,
-        "Blue" => Color::Blue,
-        "Magenta" => Color::Magenta,
-        "Red" => Color::Red,
-        "White" => Color::White,
+        "Cyan"       => Color::Cyan,
+        "Green"      => Color::Green,
+        "Yellow"     => Color::Yellow,
+        "Blue"       => Color::Blue,
+        "Magenta"    => Color::Magenta,
+        "Red"        => Color::Red,
+        "White"      => Color::White,
+        "Light Blue" => Color::Rgb(135, 206, 235),
+        "Orange"     => Color::Rgb(255, 140, 0),
+        "Pink"       => Color::Rgb(255, 105, 180),
+        "Teal"       => Color::Rgb(0, 178, 178),
+        "Purple"     => Color::Rgb(148, 0, 211),
+        "Grey"       => Color::Rgb(160, 160, 160),
+        "Rainbow" => {
+            // Animate through hues based on current time (changes ~10x per second)
+            let ms = chrono::Local::now().timestamp_millis() as u64;
+            let hue = (ms / 80) % 360;
+            let (r, g, b) = hue_to_rgb(hue as f32);
+            Color::Rgb(r, g, b)
+        }
         _ => Color::Cyan,
+    }
+}
+
+/// Convert a HSV hue (0-360, s=1, v=1) to an RGB triple.
+fn hue_to_rgb(hue: f32) -> (u8, u8, u8) {
+    let h = hue / 60.0;
+    let i = h as u32 % 6;
+    let f = h - h.floor();
+    let q = ((1.0 - f) * 255.0) as u8;
+    let t = (f * 255.0) as u8;
+    match i {
+        0 => (255, t,   0),
+        1 => (q,   255, 0),
+        2 => (0,   255, t),
+        3 => (0,   q,   255),
+        4 => (t,   0,   255),
+        _ => (255, 0,   q),
     }
 }
 
