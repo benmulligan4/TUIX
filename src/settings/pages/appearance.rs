@@ -4,7 +4,7 @@ use ratatui::{
     layout::Rect,
     style::{Color, Style},
     text::{Line, Span},
-    widgets::Paragraph,
+    widgets::{BorderType, Paragraph},
     Frame,
 };
 
@@ -12,8 +12,20 @@ use crate::settings::persistence;
 
 const ACCENT_COLORS: &[&str] = &[
     "Cyan", "Green", "Yellow", "Blue", "Magenta", "Red", "White",
-    "Light Blue", "Orange", "Pink", "Teal", "Purple", "Gold", "Grey", "Rainbow",
+    "Light Blue", "Orange", "Pink", "Teal", "Purple", "Grey", "Rainbow",
 ];
+
+const BORDER_STYLES: &[&str] = &["Rounded", "Single", "Double", "None"];
+
+/// Convert a border style name to a ratatui BorderType.
+pub fn border_type_from_name(name: &str) -> BorderType {
+    match name {
+        "Double" => BorderType::Double,
+        "Rounded" => BorderType::Rounded,
+        "None" => BorderType::Plain,
+        _ => BorderType::Plain, // "Single" and fallback
+    }
+}
 
 /// Convert a colour name string to a ratatui Color.
 /// "Rainbow" animates through the spectrum on every call.
@@ -67,6 +79,8 @@ pub fn render(frame: &mut Frame, area: Rect, cursor: usize, _scroll: usize, edit
     let clock_24h = persistence::get_bool(&settings, "appearance.clock_format_24h", true);
     let clock_secs = persistence::get_bool(&settings, "appearance.clock_show_seconds", false);
     let default_dash = persistence::get_str(&settings, "default_dashboard", "Dashboard-1");
+    let border_style = persistence::get_str(&settings, "appearance.border_style", "Rounded");
+    let status_bar = persistence::get_bool(&settings, "appearance.status_bar_enabled", false);
 
     let items: Vec<(&str, String)> = vec![
         ("TUIX Colour", accent),
@@ -74,6 +88,8 @@ pub fn render(frame: &mut Frame, area: Rect, cursor: usize, _scroll: usize, edit
         ("Clock Format", if clock_24h { "24 hour".into() } else { "12 hour".into() }),
         ("Show Seconds", if clock_secs { "Yes".into() } else { "No".into() }),
         ("Default Dashboard", default_dash),
+        ("Border Style", border_style),
+        ("Status Bar", if status_bar { "Enabled".into() } else { "Disabled".into() }),
     ];
 
     let value_style = Style::default().fg(Color::White);
@@ -107,10 +123,10 @@ pub fn render(frame: &mut Frame, area: Rect, cursor: usize, _scroll: usize, edit
 
 /// Returns true for items that use left/right cycling (more than 2 options).
 pub fn is_edit_mode_item(cursor: usize) -> bool {
-    matches!(cursor, 0 | 4) // TUIX Colour, Default Dashboard
+    matches!(cursor, 0 | 4 | 5) // TUIX Colour, Default Dashboard, Border Style
 }
 
-pub fn item_count() -> usize { 5 }
+pub fn item_count() -> usize { 7 }
 
 /// Cycle a multi-option item forward (+1) or backward (-1).
 pub fn handle_cycle(cursor: usize, forward: bool) {
@@ -137,6 +153,15 @@ pub fn handle_cycle(cursor: usize, forward: bool) {
                 crate::utilities::logging::settings(&format!("Default dashboard changed to {}", next));
             }
         }
+        5 => {
+            let current = persistence::get_str(&settings, "appearance.border_style", "Rounded");
+            let idx = BORDER_STYLES.iter().position(|&b| b == current).unwrap_or(0);
+            let len = BORDER_STYLES.len();
+            let next_idx = if forward { (idx + 1) % len } else { (idx + len - 1) % len };
+            let next = BORDER_STYLES[next_idx];
+            persistence::set(&mut settings, "appearance.border_style", serde_json::Value::String(next.to_string()));
+            crate::utilities::logging::settings(&format!("Border style changed to {}", next));
+        }
         _ => {}
     }
     persistence::save(&settings);
@@ -160,6 +185,11 @@ pub fn handle_enter(cursor: usize) {
             let current = persistence::get_bool(&settings, "appearance.clock_show_seconds", false);
             persistence::set(&mut settings, "appearance.clock_show_seconds", serde_json::Value::Bool(!current));
             crate::utilities::logging::settings(&format!("Clock seconds {}", if !current { "shown" } else { "hidden" }));
+        }
+        6 => {
+            let current = persistence::get_bool(&settings, "appearance.status_bar_enabled", false);
+            persistence::set(&mut settings, "appearance.status_bar_enabled", serde_json::Value::Bool(!current));
+            crate::utilities::logging::settings(&format!("Status bar {}", if !current { "enabled" } else { "disabled" }));
         }
         _ => {}
     }
