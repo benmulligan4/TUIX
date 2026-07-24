@@ -18,8 +18,14 @@ use super::pages::{
 use super::state::{SettingsCategory, SettingsState};
 
 pub fn render(frame: &mut Frame, area: Rect, border_style: Style, ss: &mut SettingsState) {
+    let border_name = {
+        let s = super::persistence::load();
+        super::persistence::get_str(&s, "appearance.border_style", "Rounded")
+    };
+    let btype = appearance::border_type_from_name(&border_name);
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_type(btype)
         .title(" Settings ")
         .title_alignment(ratatui::layout::Alignment::Right)
         .style(border_style);

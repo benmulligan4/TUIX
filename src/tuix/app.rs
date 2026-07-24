@@ -14,7 +14,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Margin, Rect},
     style::{Color, Style},
     text::Text,
-    widgets::{Block, Borders, Clear, Paragraph},
+    widgets::{Block, Borders, BorderType, Clear, Paragraph},
     Frame, Terminal,
 };
 use serde_json::Value;
@@ -316,9 +316,10 @@ fn status_color(status: AppStatus) -> Color {
 // System page renderer
 // ---------------------------------------------------------------------------
 
-fn render_system_page(frame: &mut Frame, area: Rect, state: &TuixState, border_style: Style) {
+fn render_system_page(frame: &mut Frame, area: Rect, state: &TuixState, border_style: Style, border_type: BorderType) {
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_type(border_type)
         .title(" Task Manager — Running Processes ")
         .title_alignment(ratatui::layout::Alignment::Right)
         .style(border_style);
@@ -427,11 +428,12 @@ fn render_app_log(frame: &mut Frame, area: Rect, app_name: &str, border_style: S
 // Logs page renderer — shows tuix.log with colored severity levels
 // ---------------------------------------------------------------------------
 
-fn render_logs_page(frame: &mut Frame, area: Rect, state: &TuixState, border_style: Style) {
+fn render_logs_page(frame: &mut Frame, area: Rect, state: &TuixState, border_style: Style, border_type: BorderType) {
     use ratatui::text::{Line, Span};
 
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_type(border_type)
         .title(" Logs — tuix.log ")
         .title_alignment(ratatui::layout::Alignment::Right)
         .style(border_style);
@@ -561,6 +563,8 @@ fn render_main(
     let settings = crate::settings::persistence::load();
     let accent_name = crate::settings::persistence::get_str(&settings, "appearance.accent_color", "Cyan");
     let accent_color = crate::settings::pages::appearance::color_from_name(&accent_name);
+    let border_name = crate::settings::persistence::get_str(&settings, "appearance.border_style", "Rounded");
+    let border_type = crate::settings::pages::appearance::border_type_from_name(&border_name);
     let border_style = if focused {
         Style::default().fg(accent_color)
     } else {
@@ -571,8 +575,8 @@ fn render_main(
         match page.as_str() {
             "settings" => settings::page::render(frame, area, border_style, &mut state.settings),
             "touchscreen" => touchscreen::page::render(frame, area, border_style),
-            "system" | "taskmanager" => render_system_page(frame, area, state, border_style),
-            "logs" => render_logs_page(frame, area, state, border_style),
+            "system" | "taskmanager" => render_system_page(frame, area, state, border_style, border_type),
+            "logs" => render_logs_page(frame, area, state, border_style, border_type),
             _ => {}
         }
     } else if state.active_app.is_some() {
@@ -612,6 +616,29 @@ fn render_no_dashboard(frame: &mut Frame, area: Rect, border_style: Style) {
         Paragraph::new(Text::raw("\n  No dashboard loaded."))
             .style(Style::default().fg(Color::DarkGray)),
         inner,
+    );
+}
+
+fn render_status_bar(frame: &mut Frame, area: Rect) {
+    use sysinfo::System;
+    let mut sys = System::new_all();
+    sys.refresh_cpu_usage();
+    sys.refresh_memory();
+
+    let cpu: f32 = sys.cpus().iter().map(|c| c.cpu_usage()).sum::<f32>()
+        / sys.cpus().len().max(1) as f32;
+    let used_mb = sys.used_memory() / 1024 / 1024;
+    let total_mb = sys.total_memory() / 1024 / 1024;
+    let now = chrono::Local::now().format("%H:%M:%S").to_string();
+
+    let s = crate::settings::persistence::load();
+    let accent_name = crate::settings::persistence::get_str(&s, "appearance.accent_color", "Cyan");
+    let accent = crate::settings::pages::appearance::color_from_name(&accent_name);
+
+    let text = format!("  {}   CPU: {:.0}%   RAM: {}/{} MB  ", now, cpu, used_mb, total_mb);
+    frame.render_widget(
+        Paragraph::new(text).style(Style::default().fg(accent)),
+        area,
     );
 }
 
@@ -1192,9 +1219,18 @@ fn run_app() -> bool {
         // Draw UI
         terminal
             .draw(|frame| {
+                let status_bar_on = {
+                    let s = crate::settings::persistence::load();
+                    crate::settings::persistence::get_bool(&s, "appearance.status_bar_enabled", false)
+                };
+                let constraints: Vec<Constraint> = if status_bar_on {
+                    vec![Constraint::Length(1), Constraint::Fill(1), Constraint::Length(1)]
+                } else {
+                    vec![Constraint::Length(1), Constraint::Fill(1)]
+                };
                 let rows = Layout::default()
                     .direction(Direction::Vertical)
-                    .constraints([Constraint::Length(1), Constraint::Fill(1)])
+                    .constraints(constraints)
                     .split(frame.area());
 
                 // 1. Draw main container
@@ -1203,7 +1239,12 @@ fn run_app() -> bool {
                 // 2. Draw navbar label row
                 render_navbar(frame, rows[0], &nav_items, &state);
 
-                // 3. Draw dropdown LAST (overlays main container)
+                // 3. Draw status bar if enabled
+                if status_bar_on {
+                    render_status_bar(frame, rows[2]);
+                }
+
+                // 4. Draw dropdown LAST (overlays main container)
                 if state.nav_expanded {
                     render_dropdown(frame, rows[1], &nav_items, &state);
                 }

@@ -241,15 +241,13 @@ pub fn handle_enter(cursor: usize, ss: &mut SettingsState) {
                     "clock_enabled": false,
                     "clock_format_24h": true,
                     "clock_show_seconds": false,
-                    "font": "Default"
+                    "border_style": "Rounded",
+                    "status_bar_enabled": false
                 },
                 "display": {
-                    "screen_timeout": "Never",
                     "fullscreen": false
                 },
-                "hotkeys": {
-                    "numpad_navigation": false
-                },
+                "hotkeys": {},
                 "button_mapping": {
                     "focus_toggle_key": "Tab"
                 },
