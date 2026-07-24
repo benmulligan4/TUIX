@@ -11,7 +11,6 @@ use ratatui::{
 use crate::settings::persistence;
 
 const ACCENT_COLORS: &[&str] = &["Cyan", "Green", "Yellow", "Blue", "Magenta", "Red", "White"];
-const FONT_OPTIONS: &[&str] = &["Default", "Monospace", "Serif", "Sans", "Narrow"];
 
 /// Convert a colour name string to a ratatui Color.
 pub fn color_from_name(name: &str) -> Color {
@@ -33,7 +32,6 @@ pub fn render(frame: &mut Frame, area: Rect, cursor: usize, _scroll: usize, edit
     let clock_on = persistence::get_bool(&settings, "appearance.clock_enabled", false);
     let clock_24h = persistence::get_bool(&settings, "appearance.clock_format_24h", true);
     let clock_secs = persistence::get_bool(&settings, "appearance.clock_show_seconds", false);
-    let font = persistence::get_str(&settings, "appearance.font", "Default");
     let default_dash = persistence::get_str(&settings, "default_dashboard", "Dashboard-1");
 
     let items: Vec<(&str, String)> = vec![
@@ -41,7 +39,6 @@ pub fn render(frame: &mut Frame, area: Rect, cursor: usize, _scroll: usize, edit
         ("Clock", if clock_on { "Enabled".into() } else { "Disabled".into() }),
         ("Clock Format", if clock_24h { "24 hour".into() } else { "12 hour".into() }),
         ("Show Seconds", if clock_secs { "Yes".into() } else { "No".into() }),
-        ("Font", font),
         ("Default Dashboard", default_dash),
     ];
 
@@ -76,10 +73,10 @@ pub fn render(frame: &mut Frame, area: Rect, cursor: usize, _scroll: usize, edit
 
 /// Returns true for items that use left/right cycling (more than 2 options).
 pub fn is_edit_mode_item(cursor: usize) -> bool {
-    matches!(cursor, 0 | 4 | 5) // TUIX Colour, Font, Default Dashboard
+    matches!(cursor, 0 | 4) // TUIX Colour, Default Dashboard
 }
 
-pub fn item_count() -> usize { 6 }
+pub fn item_count() -> usize { 5 }
 
 /// Cycle a multi-option item forward (+1) or backward (-1).
 pub fn handle_cycle(cursor: usize, forward: bool) {
@@ -95,15 +92,6 @@ pub fn handle_cycle(cursor: usize, forward: bool) {
             crate::utilities::logging::settings(&format!("TUIX Colour changed to {}", next));
         }
         4 => {
-            let current = persistence::get_str(&settings, "appearance.font", "Default");
-            let idx = FONT_OPTIONS.iter().position(|&f| f == current).unwrap_or(0);
-            let len = FONT_OPTIONS.len();
-            let next_idx = if forward { (idx + 1) % len } else { (idx + len - 1) % len };
-            let next = FONT_OPTIONS[next_idx];
-            persistence::set(&mut settings, "appearance.font", serde_json::Value::String(next.to_string()));
-            crate::utilities::logging::settings(&format!("Font changed to {}", next));
-        }
-        5 => {
             let dash_names = persistence::load_dashboard_names();
             if !dash_names.is_empty() {
                 let current = persistence::get_str(&settings, "default_dashboard", "Dashboard-1");
