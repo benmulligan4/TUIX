@@ -1347,46 +1347,36 @@ fn run_app() -> bool {
             continue;
         }
 
-        // ---- Intercept: Numpad navigation (when enabled in settings) ----
-        // Number keys 8/2/4/6 = Up/Down/Left/Right, 7 = Back, 9 = Enter.
-        // These fire regardless of focus when numpad_navigation is enabled.
-        {
-            let numpad_settings = crate::settings::persistence::load();
-            let numpad_on = crate::settings::persistence::get_bool(
-                &numpad_settings, "hotkeys.numpad_navigation", false,
-            );
-            if numpad_on {
-                if let crossterm::event::KeyCode::Char(ch) = key_event.code {
-                    let nav_action = match ch {
-                        '8' => Some(Action::Up),
-                        '2' => Some(Action::Down),
-                        '4' => Some(Action::Left),
-                        '6' => Some(Action::Right),
-                        '7' => Some(Action::Back),
-                        '9' => Some(Action::Enter),
-                        _ => None,
-                    };
-                    if let Some(a) = nav_action {
-                        // Route through the normal action handlers
-                        if state.focus == FocusTarget::Navbar {
-                            match handle_navbar_key(
-                                a, &mut state, &nav_items, &apps_registry, &dashboards,
-                                &mut active_internal_app, &mut active_installed_dash,
-                            ) {
-                                NavResult::Quit => break,
-                                NavResult::Restart => { should_restart = true; break; }
-                                _ => {}
-                            }
-                        } else {
-                            match handle_main_key(a, &mut state, &mut active_internal_app, &mut active_installed_dash) {
-                                MainResult::Quit => break,
-                                MainResult::Restart => { should_restart = true; break; }
-                                _ => {}
-                            }
-                        }
-                        continue;
+        // ---- Intercept: Numpad navigation (always active) ----
+        // 8=Up, 2=Down, 4=Left, 6=Right, 7=Back/Q, 9=Enter
+        if let crossterm::event::KeyCode::Char(ch) = key_event.code {
+            let nav_action = match ch {
+                '8' => Some(Action::Up),
+                '2' => Some(Action::Down),
+                '4' => Some(Action::Left),
+                '6' => Some(Action::Right),
+                '7' => Some(Action::Back),
+                '9' => Some(Action::Enter),
+                _ => None,
+            };
+            if let Some(a) = nav_action {
+                if state.focus == FocusTarget::Navbar {
+                    match handle_navbar_key(
+                        a, &mut state, &nav_items, &apps_registry, &dashboards,
+                        &mut active_internal_app, &mut active_installed_dash,
+                    ) {
+                        NavResult::Quit => break,
+                        NavResult::Restart => { should_restart = true; break; }
+                        _ => {}
+                    }
+                } else {
+                    match handle_main_key(a, &mut state, &mut active_internal_app, &mut active_installed_dash) {
+                        MainResult::Quit => break,
+                        MainResult::Restart => { should_restart = true; break; }
+                        _ => {}
                     }
                 }
+                continue;
             }
         }
 
@@ -1400,10 +1390,8 @@ fn run_app() -> bool {
                     let key_num = ch.to_digit(10).unwrap() as usize;
                     let hotkey_settings = crate::settings::persistence::load();
                     // Skip if numpad navigation is on (those digits are nav keys)
-                    let numpad_on = crate::settings::persistence::get_bool(
-                        &hotkey_settings, "hotkeys.numpad_navigation", false,
-                    );
-                    if !numpad_on || !matches!(ch, '8' | '2' | '4' | '6' | '7' | '9') {
+                    // Numpad nav digits are always reserved — skip hotkey for them
+                    if !matches!(ch, '8' | '2' | '4' | '6' | '7' | '9') {
                         let path = format!("hotkeys.key_{}", key_num);
                         if let Some(val) = crate::settings::persistence::get(&hotkey_settings, &path) {
                             if let Some(action_str) = val.as_str() {
