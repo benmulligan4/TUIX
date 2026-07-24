@@ -110,21 +110,44 @@ pub fn render(frame: &mut Frame, area: Rect, border_style: Style, ss: &mut Setti
     );
 
     // Render the selected category's content
+    let editing = ss.editing_setting;
     match cat {
         SettingsCategory::About => about::render(frame, content_area, cursor, scroll),
         SettingsCategory::WifiBluetooth => {
             wifi_bluetooth::render(frame, content_area, cursor, scroll)
         }
         SettingsCategory::Audio => audio::render(frame, content_area, cursor, scroll),
-        SettingsCategory::Display => display::render(frame, content_area, cursor, scroll),
-        SettingsCategory::Appearance => appearance::render(frame, content_area, cursor, scroll),
+        SettingsCategory::Display => display::render(frame, content_area, cursor, scroll, editing),
+        SettingsCategory::Appearance => appearance::render(frame, content_area, cursor, scroll, editing),
         SettingsCategory::ButtonMapping => {
             button_mapping::render(frame, content_area, cursor, scroll, ss.awaiting_key)
         }
-        SettingsCategory::Hotkeys => hotkeys::render(frame, content_area, cursor, scroll),
+        SettingsCategory::Hotkeys => hotkeys::render(frame, content_area, cursor, scroll, editing),
         SettingsCategory::Git => git::render(frame, content_area, cursor, scroll, &ss.terminal_output, ss.terminal_focused, ss.terminal_scroll),
         SettingsCategory::Utilities => utilities::render(frame, content_area, cursor, scroll),
         SettingsCategory::Power => power::render(frame, content_area, cursor, scroll),
+    }
+}
+
+/// Returns true if the current right-pane item supports left/right cycling mode.
+pub fn is_edit_mode_item(ss: &SettingsState) -> bool {
+    let cursor = ss.right_cursor;
+    match ss.selected_category() {
+        SettingsCategory::Appearance => appearance::is_edit_mode_item(cursor),
+        SettingsCategory::Display => display::is_edit_mode_item(cursor),
+        SettingsCategory::Hotkeys => hotkeys::is_edit_mode_item(cursor),
+        _ => false,
+    }
+}
+
+/// Cycle the current multi-option setting forward or backward.
+pub fn handle_setting_cycle(ss: &mut SettingsState, forward: bool) {
+    let cursor = ss.right_cursor;
+    match ss.selected_category() {
+        SettingsCategory::Appearance => appearance::handle_cycle(cursor, forward),
+        SettingsCategory::Display => display::handle_cycle(cursor, forward),
+        SettingsCategory::Hotkeys => hotkeys::handle_cycle(cursor, forward),
+        _ => {}
     }
 }
 
@@ -152,7 +175,7 @@ pub enum SettingsAction {
     ShowPopup(String),
 }
 
-/// Handle Enter press in the right pane.
+/// Handle Enter press in the right pane (binary toggles and actions only).
 pub fn handle_right_pane_enter(ss: &mut SettingsState) -> SettingsAction {
     let cursor = ss.right_cursor;
     match ss.selected_category() {

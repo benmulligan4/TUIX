@@ -994,7 +994,25 @@ fn handle_main_key(
         // Key capture mode is now handled at the raw event level
 
         if ss.in_right_pane {
-            // In right pane — navigate settings items
+            // ---- Edit mode: Left/Right cycles the current multi-option setting ----
+            if ss.editing_setting {
+                match action {
+                    Action::Left => {
+                        settings::page::handle_setting_cycle(ss, false);
+                    }
+                    Action::Right => {
+                        settings::page::handle_setting_cycle(ss, true);
+                    }
+                    Action::Enter | Action::Back => {
+                        // Exit edit mode; Back exits without further action
+                        ss.editing_setting = false;
+                    }
+                    _ => {}
+                }
+                return MainResult::None;
+            }
+
+            // ---- Normal right pane navigation ----
             let count = settings::page::current_item_count(ss);
             match action {
                 Action::Up => {
@@ -1007,14 +1025,30 @@ fn handle_main_key(
                         ss.right_cursor += 1;
                     }
                 }
+                // Left/Right (including numpad 4/6) directly cycle multi-option settings
+                Action::Left => {
+                    if settings::page::is_edit_mode_item(ss) {
+                        settings::page::handle_setting_cycle(ss, false);
+                    }
+                }
+                Action::Right => {
+                    if settings::page::is_edit_mode_item(ss) {
+                        settings::page::handle_setting_cycle(ss, true);
+                    }
+                }
                 Action::Enter => {
-                    match settings::page::handle_right_pane_enter(ss) {
-                        settings::page::SettingsAction::Quit => return MainResult::Quit,
-                        settings::page::SettingsAction::Restart => return MainResult::Restart,
-                        settings::page::SettingsAction::ShowPopup(msg) => {
-                            state.popup = Some((msg, Instant::now()));
+                    if settings::page::is_edit_mode_item(ss) {
+                        // Enter edit mode to show ◄ ► arrows
+                        ss.editing_setting = true;
+                    } else {
+                        match settings::page::handle_right_pane_enter(ss) {
+                            settings::page::SettingsAction::Quit => return MainResult::Quit,
+                            settings::page::SettingsAction::Restart => return MainResult::Restart,
+                            settings::page::SettingsAction::ShowPopup(msg) => {
+                                state.popup = Some((msg, Instant::now()));
+                            }
+                            settings::page::SettingsAction::None => {}
                         }
-                        settings::page::SettingsAction::None => {}
                     }
                 }
                 Action::Back => {

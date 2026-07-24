@@ -80,6 +80,8 @@ pub struct SettingsState {
     pub terminal_focused: bool,
     /// Scroll offset for the terminal output panel.
     pub terminal_scroll: usize,
+    /// When true, the current multi-option setting is in left/right cycling mode.
+    pub editing_setting: bool,
 }
 
 impl SettingsState {
@@ -93,6 +95,7 @@ impl SettingsState {
             terminal_output: Vec::new(),
             terminal_focused: false,
             terminal_scroll: 0,
+            editing_setting: false,
         }
     }
 
@@ -108,5 +111,6 @@ impl SettingsState {
         self.terminal_output.clear();
         self.terminal_focused = false;
         self.terminal_scroll = 0;
+        self.editing_setting = false;
     }
 }
