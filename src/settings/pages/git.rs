@@ -36,6 +36,7 @@ pub fn render(
         format!("Run Clone Script (clone{})", script_ext),
         format!("Run Setup Script (setup{})", script_ext),
         "Check VNC Viewer Status".to_string(),
+        "Copy VNC IP to Clipboard".to_string(),
         "Enable VNC Viewer".to_string(),
         "Disable VNC Viewer".to_string(),
         "Restore TUIX Settings to Default".to_string(),
@@ -140,7 +141,7 @@ pub fn render(
     frame.render_widget(Paragraph::new(term_lines), term_inner);
 }
 
-pub fn item_count() -> usize { 9 }
+pub fn item_count() -> usize { 10 }
 
 pub fn handle_enter(cursor: usize, ss: &mut SettingsState) {
     let script_dir = std::env::current_dir().unwrap_or_default().join("x");
@@ -199,6 +200,12 @@ pub fn handle_enter(cursor: usize, ss: &mut SettingsState) {
             }
         }
         6 => {
+            // Copy VNC IP to Clipboard
+            let ip = get_vnc_ip();
+            ss.terminal_output.push(format!("VNC IP: {}", ip));
+            copy_to_clipboard(&ip, &mut ss.terminal_output);
+        }
+        7 => {
             // Enable VNC Viewer
             ss.terminal_output.push("Enabling VNC Viewer...".into());
             if cfg!(target_os = "linux") {
@@ -211,7 +218,7 @@ pub fn handle_enter(cursor: usize, ss: &mut SettingsState) {
                 ss.terminal_output.push("VNC is only available on Raspberry Pi.".into());
             }
         }
-        7 => {
+        8 => {
             // Disable VNC Viewer
             ss.terminal_output.push("Disabling VNC Viewer...".into());
             if cfg!(target_os = "linux") {
@@ -224,7 +231,7 @@ pub fn handle_enter(cursor: usize, ss: &mut SettingsState) {
                 ss.terminal_output.push("VNC is only available on Raspberry Pi.".into());
             }
         }
-        8 => {
+        9 => {
             // Restore defaults
             let defaults = serde_json::json!({
                 "default_dashboard": "Dashboard-1",
@@ -287,5 +294,53 @@ fn run_script(path: &std::path::Path) -> Vec<String> {
         run_command("cmd", &["/C", &path.to_string_lossy()])
     } else {
         run_command("bash", &[&path.to_string_lossy()])
+    }
+}
+
+fn get_vnc_ip() -> String {
+    if cfg!(target_os = "windows") {
+        std::process::Command::new("powershell")
+            .args(["-Command", "(Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.PrefixOrigin -ne 'WellKnown' } | Select-Object -First 1).IPAddress"])
+            .output()
+            .ok()
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .map(|s| s.trim().to_string())
+            .unwrap_or_else(|| "Unknown".into())
+    } else {
+        std::process::Command::new("hostname")
+            .arg("-I")
+            .output()
+            .ok()
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .map(|s| s.split_whitespace().next().unwrap_or("Unknown").to_string())
+            .unwrap_or_else(|| "Unknown".into())
+    }
+}
+
+fn copy_to_clipboard(text: &str, output: &mut Vec<String>) {
+    let result = if cfg!(target_os = "windows") {
+        std::process::Command::new("cmd")
+            .args(["/C", &format!("echo {}| clip", text)])
+            .status()
+            .is_ok()
+    } else {
+        // Try xclip then xsel
+        let xclip = std::process::Command::new("sh")
+            .args(["-c", &format!("echo -n '{}' | xclip -selection clipboard", text)])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if xclip { true } else {
+            std::process::Command::new("sh")
+                .args(["-c", &format!("echo -n '{}' | xsel --clipboard --input", text)])
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false)
+        }
+    };
+    if result {
+        output.push(format!("Copied {} to clipboard.", text));
+    } else {
+        output.push(format!("Could not copy to clipboard (install xclip or xsel on Pi). IP: {}", text));
     }
 }
