@@ -22,6 +22,7 @@ pub enum Level {
     Warn,
     Error,
     Script,
+    Settings,
 }
 
 impl Level {
@@ -31,6 +32,7 @@ impl Level {
             Level::Warn => "WARN",
             Level::Error => "ERROR",
             Level::Script => "SCRIPT",
+            Level::Settings => "SETTINGS",
         }
     }
 }
@@ -110,6 +112,12 @@ pub fn warn(message: &str) {
 #[allow(dead_code)]
 pub fn error(message: &str) {
     log(Level::Error, message);
+}
+
+/// Log a SETTINGS message.
+#[allow(dead_code)]
+pub fn settings(message: &str) {
+    log(Level::Settings, message);
 }
 
 /// Read all lines from the log file.
