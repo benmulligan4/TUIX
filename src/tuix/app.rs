@@ -1162,6 +1162,8 @@ fn run_foreground(cmd: &[String]) {
 // ---------------------------------------------------------------------------
 
 pub fn main() {
+    super::boot_animation::run_if_enabled();
+
     loop {
         let should_restart = run_app();
         if !should_restart {

@@ -16,8 +16,11 @@ pub fn render(frame: &mut Frame, area: Rect, cursor: usize, _scroll: usize, _edi
 
     let value_style = Style::default().fg(Color::White);
 
+    let boot_animation = persistence::get_bool(&settings, "display.boot_animation", true);
+
     let items: Vec<(&str, String)> = vec![
         ("Fullscreen (coming soon)", if fullscreen { "Enabled".into() } else { "Disabled".into() }),
+        ("Boot Animation", if boot_animation { "Enabled".into() } else { "Disabled".into() }),
     ];
 
     let mut lines: Vec<Line> = Vec::new();
@@ -40,15 +43,25 @@ pub fn render(frame: &mut Frame, area: Rect, cursor: usize, _scroll: usize, _edi
 
 pub fn is_edit_mode_item(_cursor: usize) -> bool { false }
 
-pub fn item_count() -> usize { 1 }
+pub fn item_count() -> usize { 2 }
 
 pub fn handle_cycle(_cursor: usize, _forward: bool) {}
 
 pub fn handle_enter(cursor: usize) {
-    if cursor != 0 { return; }
     let mut settings = persistence::load();
-    let current = persistence::get_bool(&settings, "display.fullscreen", false);
-    persistence::set(&mut settings, "display.fullscreen", serde_json::Value::Bool(!current));
-    persistence::save(&settings);
-    crate::utilities::logging::settings(&format!("Fullscreen {}", if !current { "enabled" } else { "disabled" }));
+    match cursor {
+        0 => {
+            let current = persistence::get_bool(&settings, "display.fullscreen", false);
+            persistence::set(&mut settings, "display.fullscreen", serde_json::Value::Bool(!current));
+            persistence::save(&settings);
+            crate::utilities::logging::settings(&format!("Fullscreen {}", if !current { "enabled" } else { "disabled" }));
+        }
+        1 => {
+            let current = persistence::get_bool(&settings, "display.boot_animation", true);
+            persistence::set(&mut settings, "display.boot_animation", serde_json::Value::Bool(!current));
+            persistence::save(&settings);
+            crate::utilities::logging::settings(&format!("Boot Animation {}", if !current { "enabled" } else { "disabled" }));
+        }
+        _ => {}
+    }
 }

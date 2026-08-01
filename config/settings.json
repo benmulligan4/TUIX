@@ -10,7 +10,8 @@
     "status_bar_enabled": false
   },
   "display": {
-    "fullscreen": false
+    "fullscreen": false,
+    "boot_animation": true
   },
   "hotkeys": {
     "key_1": null,
