@@ -81,6 +81,8 @@ pub fn render(frame: &mut Frame, area: Rect, cursor: usize, _scroll: usize, edit
     let default_dash = persistence::get_str(&settings, "default_dashboard", "Dashboard-1");
     let border_style = persistence::get_str(&settings, "appearance.border_style", "Rounded");
     let status_bar = persistence::get_bool(&settings, "appearance.status_bar_enabled", false);
+    let boot_anim = persistence::get_bool(&settings, "appearance.boot_animation", true);
+    let boot_anim_color = persistence::get_str(&settings, "appearance.boot_animation_color", "White");
 
     let items: Vec<(&str, String)> = vec![
         ("TUIX Colour", accent),
@@ -90,6 +92,8 @@ pub fn render(frame: &mut Frame, area: Rect, cursor: usize, _scroll: usize, edit
         ("Default Dashboard", default_dash),
         ("Border Style", border_style),
         ("Status Bar", if status_bar { "Enabled".into() } else { "Disabled".into() }),
+        ("Boot Animation", if boot_anim { "Enabled".into() } else { "Disabled".into() }),
+        ("Boot Animation Colour", boot_anim_color),
     ];
 
     let value_style = Style::default().fg(Color::White);
@@ -123,10 +127,10 @@ pub fn render(frame: &mut Frame, area: Rect, cursor: usize, _scroll: usize, edit
 
 /// Returns true for items that use left/right cycling (more than 2 options).
 pub fn is_edit_mode_item(cursor: usize) -> bool {
-    matches!(cursor, 0 | 4 | 5) // TUIX Colour, Default Dashboard, Border Style
+    matches!(cursor, 0 | 4 | 5 | 8) // TUIX Colour, Default Dashboard, Border Style, Boot Animation Colour
 }
 
-pub fn item_count() -> usize { 7 }
+pub fn item_count() -> usize { 9 }
 
 /// Cycle a multi-option item forward (+1) or backward (-1).
 pub fn handle_cycle(cursor: usize, forward: bool) {
@@ -162,12 +166,21 @@ pub fn handle_cycle(cursor: usize, forward: bool) {
             persistence::set(&mut settings, "appearance.border_style", serde_json::Value::String(next.to_string()));
             crate::utilities::logging::settings(&format!("Border style changed to {}", next));
         }
+        8 => {
+            let current = persistence::get_str(&settings, "appearance.boot_animation_color", "White");
+            let idx = ACCENT_COLORS.iter().position(|&c| c == current).unwrap_or(0);
+            let len = ACCENT_COLORS.len();
+            let next_idx = if forward { (idx + 1) % len } else { (idx + len - 1) % len };
+            let next = ACCENT_COLORS[next_idx];
+            persistence::set(&mut settings, "appearance.boot_animation_color", serde_json::Value::String(next.to_string()));
+            crate::utilities::logging::settings(&format!("Boot Animation Colour changed to {}", next));
+        }
         _ => {}
     }
     persistence::save(&settings);
 }
 
-/// Handle Enter for binary-toggle items (Clock, Clock Format, Show Seconds).
+/// Handle Enter for binary-toggle items.
 pub fn handle_enter(cursor: usize) {
     let mut settings = persistence::load();
     match cursor {
@@ -190,6 +203,11 @@ pub fn handle_enter(cursor: usize) {
             let current = persistence::get_bool(&settings, "appearance.status_bar_enabled", false);
             persistence::set(&mut settings, "appearance.status_bar_enabled", serde_json::Value::Bool(!current));
             crate::utilities::logging::settings(&format!("Status bar {}", if !current { "enabled" } else { "disabled" }));
+        }
+        7 => {
+            let current = persistence::get_bool(&settings, "appearance.boot_animation", true);
+            persistence::set(&mut settings, "appearance.boot_animation", serde_json::Value::Bool(!current));
+            crate::utilities::logging::settings(&format!("Boot Animation {}", if !current { "enabled" } else { "disabled" }));
         }
         _ => {}
     }

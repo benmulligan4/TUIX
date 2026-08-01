@@ -7,11 +7,12 @@
     "clock_format_24h": true,
     "clock_show_seconds": false,
     "border_style": "Rounded",
-    "status_bar_enabled": false
+    "status_bar_enabled": false,
+    "boot_animation": true,
+    "boot_animation_color": "White"
   },
   "display": {
-    "fullscreen": false,
-    "boot_animation": true
+    "fullscreen": false
   },
   "hotkeys": {
     "key_1": null,
