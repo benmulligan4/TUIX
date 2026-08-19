@@ -1,4 +1,32 @@
 {
   "default_dashboard": "Dashboard-1",
-  "theme": "default"
+  "theme": "default",
+  "appearance": {
+    "accent_color": "Cyan",
+    "clock_enabled": false,
+    "clock_format_24h": true,
+    "clock_show_seconds": false,
+    "border_style": "Rounded",
+    "status_bar_enabled": false
+  },
+  "display": {
+    "fullscreen": false
+  },
+  "hotkeys": {
+    "key_1": null,
+    "key_2": null,
+    "key_3": null,
+    "key_4": null,
+    "key_5": null,
+    "key_6": null,
+    "key_7": null,
+    "key_8": null,
+    "key_9": null
+  },
+  "button_mapping": {
+    "focus_toggle_key": "Tab"
+  },
+  "utilities": {
+    "onscreen_keyboard_enabled": true
+  }
 }

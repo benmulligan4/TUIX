@@ -2,7 +2,7 @@
 
 use std::io;
 use std::process::Command;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crossterm::{
     event::{self, Event, KeyEventKind},
@@ -14,7 +14,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Margin, Rect},
     style::{Color, Style},
     text::Text,
-    widgets::{Block, Borders, Clear, Paragraph},
+    widgets::{Block, Borders, BorderType, Clear, Paragraph},
     Frame, Terminal,
 };
 use serde_json::Value;
@@ -24,12 +24,15 @@ use super::models::{Action, AppStatus, FocusTarget, TuixState};
 use super::process_manager;
 use super::registry;
 
-use crate::applications::default::character_set::{AppAction, CharacterSetApp};
-use crate::applications::default::text_editor::{TextEditorAction, TextEditorApp};
+use crate::applications::character_set::{AppAction, CharacterSetApp};
+use crate::applications::file_explorer::{FileExplorerAction, FileExplorerApp};
+use crate::applications::text_editor::{TextEditorAction, TextEditorApp};
 use crate::dashboards::{dashboard_1, dashboard_2};
 use crate::dashboards::installed_runner::InstalledDashboard;
 use crate::settings;
+use crate::settings::state::SettingsCategory;
 use crate::touchscreen;
+use crate::utilities::logging;
 
 // ---------------------------------------------------------------------------
 // Internal app wrapper — supports multiple built-in app types
@@ -37,6 +40,7 @@ use crate::touchscreen;
 
 enum InternalApp {
     CharacterSet(CharacterSetApp),
+    FileExplorer(FileExplorerApp),
     TextEditor(TextEditorApp),
 }
 
@@ -44,6 +48,7 @@ impl InternalApp {
     fn render(&mut self, frame: &mut Frame, area: Rect, border_style: Style) {
         match self {
             InternalApp::CharacterSet(app) => app.render(frame, area, border_style),
+            InternalApp::FileExplorer(app) => app.render(frame, area, border_style),
             InternalApp::TextEditor(app) => app.render(frame, area, border_style),
         }
     }
@@ -54,6 +59,9 @@ impl InternalApp {
             InternalApp::CharacterSet(app) => {
                 matches!(app.handle_key(code), Some(AppAction::Back))
             }
+            InternalApp::FileExplorer(app) => {
+                matches!(app.handle_key(code), Some(FileExplorerAction::Back))
+            }
             InternalApp::TextEditor(app) => {
                 matches!(app.handle_key(code), Some(TextEditorAction::Back))
             }
@@ -63,6 +71,7 @@ impl InternalApp {
     fn stop(&mut self) {
         match self {
             InternalApp::CharacterSet(app) => app.stop(),
+            InternalApp::FileExplorer(app) => app.stop(),
             InternalApp::TextEditor(app) => app.stop(),
         }
     }
@@ -203,18 +212,20 @@ fn build_nav_items(
             content: NavContent::Children(app_children),
         },
         NavItem {
-            label: "Settings".to_string(),
-            content: NavContent::Direct("page:settings".to_string()),
-        },
-        NavItem {
             label: "Touchscreen".to_string(),
             content: NavContent::Direct("page:touchscreen".to_string()),
+        },
+        NavItem {
+            label: "Settings".to_string(),
+            content: NavContent::Direct("page:settings".to_string()),
         },
         NavItem {
             label: "System".to_string(),
             content: NavContent::Children(vec![
                 ("Task Manager".to_string(), "page:taskmanager".to_string()),
                 ("Branches".to_string(), "submenu:branches".to_string()),
+                ("Logs".to_string(), "page:logs".to_string()),
+                ("Open Git Repository".to_string(), "system:open_repo".to_string()),
                 ("Restart".to_string(), "system:restart".to_string()),
                 ("Shutdown".to_string(), "system:shutdown".to_string()),
             ]),
@@ -230,6 +241,11 @@ fn render_navbar(frame: &mut Frame, area: Rect, nav_items: &[NavItem], state: &T
     let focused = state.focus == FocusTarget::Navbar;
     let labels: Vec<&str> = nav_items.iter().map(|i| i.label.as_str()).collect();
 
+    // Load accent colour from settings
+    let settings = crate::settings::persistence::load();
+    let accent_name = crate::settings::persistence::get_str(&settings, "appearance.accent_color", "Cyan");
+    let accent_color = crate::settings::pages::appearance::color_from_name(&accent_name);
+
     let mut constraints: Vec<Constraint> = labels
         .iter()
         .map(|lbl| Constraint::Length((lbl.len() + 4) as u16))
@@ -243,7 +259,7 @@ fn render_navbar(frame: &mut Frame, area: Rect, nav_items: &[NavItem], state: &T
 
     for (i, label) in labels.iter().enumerate() {
         let style = if focused && i == state.nav_cursor {
-            Style::default().fg(Color::Black).bg(Color::Cyan)
+            Style::default().fg(Color::Black).bg(accent_color)
         } else {
             Style::default().fg(Color::White)
         };
@@ -251,6 +267,34 @@ fn render_navbar(frame: &mut Frame, area: Rect, nav_items: &[NavItem], state: &T
             Paragraph::new(Text::raw(format!("  {}  ", label))).style(style),
             cols[i],
         );
+    }
+
+    // Render clock in the rightmost column if enabled
+    let clock_on = crate::settings::persistence::get_bool(&settings, "appearance.clock_enabled", false);
+    if clock_on {
+        let clock_24h = crate::settings::persistence::get_bool(&settings, "appearance.clock_format_24h", true);
+        let clock_secs = crate::settings::persistence::get_bool(&settings, "appearance.clock_show_seconds", false);
+        let now = chrono::Local::now();
+        let time_str = if clock_24h {
+            if clock_secs { now.format("%H:%M:%S").to_string() } else { now.format("%H:%M").to_string() }
+        } else {
+            if clock_secs { now.format("%I:%M:%S %p").to_string() } else { now.format("%I:%M %p").to_string() }
+        };
+        let clock_width = time_str.len() as u16 + 2;
+        let last_col = cols[labels.len()]; // the Fill(1) column
+        if last_col.width >= clock_width {
+            let clock_rect = Rect {
+                x: last_col.x + last_col.width - clock_width,
+                y: last_col.y,
+                width: clock_width,
+                height: 1,
+            };
+            frame.render_widget(
+                Paragraph::new(Text::raw(format!(" {} ", time_str)))
+                    .style(Style::default().fg(accent_color)),
+                clock_rect,
+            );
+        }
     }
 }
 
@@ -418,9 +462,10 @@ fn status_color(status: AppStatus) -> Color {
 // System page renderer
 // ---------------------------------------------------------------------------
 
-fn render_system_page(frame: &mut Frame, area: Rect, state: &TuixState, border_style: Style) {
+fn render_system_page(frame: &mut Frame, area: Rect, state: &TuixState, border_style: Style, border_type: BorderType) {
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_type(border_type)
         .title(" Task Manager — Running Processes ")
         .title_alignment(ratatui::layout::Alignment::Right)
         .style(border_style);
@@ -526,28 +571,158 @@ fn render_app_log(frame: &mut Frame, area: Rect, app_name: &str, border_style: S
 }
 
 // ---------------------------------------------------------------------------
+// Logs page renderer — shows tuix.log with colored severity levels
+// ---------------------------------------------------------------------------
+
+fn render_logs_page(frame: &mut Frame, area: Rect, state: &TuixState, border_style: Style, border_type: BorderType) {
+    use ratatui::text::{Line, Span};
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(border_type)
+        .title(" Logs — tuix.log ")
+        .title_alignment(ratatui::layout::Alignment::Right)
+        .style(border_style);
+    frame.render_widget(block, area);
+    let inner = area.inner(Margin { horizontal: 1, vertical: 1 });
+
+    let lines = logging::read_log_lines();
+
+    if lines.is_empty() {
+        frame.render_widget(
+            Paragraph::new(Text::raw("\n  No log entries yet."))
+                .style(Style::default().fg(Color::DarkGray)),
+            inner,
+        );
+        return;
+    }
+
+    // log_scroll is a reverse offset from the bottom (0 = most recent entries).
+    // Compute the start line so that the view ends at (total - log_scroll).
+    let total = lines.len();
+    let visible_height = inner.height as usize;
+    let max_offset = total.saturating_sub(visible_height);
+    let offset = state.log_scroll.min(max_offset);
+    let start = max_offset.saturating_sub(offset);
+    let end = (start + visible_height).min(total);
+    let visible_lines = &lines[start..end];
+
+    let styled_lines: Vec<Line> = visible_lines
+        .iter()
+        .map(|line| {
+            // Find severity tag and color just the tag text
+            if let Some(start) = line.find("[INFO]") {
+                let before = &line[..start];
+                let tag = "[INFO]";
+                let after = &line[start + tag.len()..];
+                Line::from(vec![
+                    Span::styled(format!("  {}", before), Style::default().fg(Color::White)),
+                    Span::styled(tag, Style::default().fg(Color::Cyan)),
+                    Span::styled(after.to_string(), Style::default().fg(Color::White)),
+                ])
+            } else if let Some(start) = line.find("[WARN]") {
+                let before = &line[..start];
+                let tag = "[WARN]";
+                let after = &line[start + tag.len()..];
+                Line::from(vec![
+                    Span::styled(format!("  {}", before), Style::default().fg(Color::White)),
+                    Span::styled(tag, Style::default().fg(Color::Yellow)),
+                    Span::styled(after.to_string(), Style::default().fg(Color::White)),
+                ])
+            } else if let Some(start) = line.find("[ERROR]") {
+                let before = &line[..start];
+                let tag = "[ERROR]";
+                let after = &line[start + tag.len()..];
+                Line::from(vec![
+                    Span::styled(format!("  {}", before), Style::default().fg(Color::White)),
+                    Span::styled(tag, Style::default().fg(Color::Red)),
+                    Span::styled(after.to_string(), Style::default().fg(Color::White)),
+                ])
+            } else if let Some(start) = line.find("[SCRIPT]") {
+                let before = &line[..start];
+                let tag = "[SCRIPT]";
+                let after = &line[start + tag.len()..];
+                Line::from(vec![
+                    Span::styled(format!("  {}", before), Style::default().fg(Color::White)),
+                    Span::styled(tag, Style::default().fg(Color::Magenta)),
+                    Span::styled(after.to_string(), Style::default().fg(Color::White)),
+                ])
+            } else if let Some(start) = line.find("[SETTINGS]") {
+                let before = &line[..start];
+                let tag = "[SETTINGS]";
+                let after = &line[start + tag.len()..];
+                Line::from(vec![
+                    Span::styled(format!("  {}", before), Style::default().fg(Color::White)),
+                    Span::styled(tag, Style::default().fg(Color::Green)),
+                    Span::styled(after.to_string(), Style::default().fg(Color::White)),
+                ])
+            } else {
+                Line::from(Span::styled(
+                    format!("  {}", line),
+                    Style::default().fg(Color::DarkGray),
+                ))
+            }
+        })
+        .collect();
+
+    let scrollbar_info = format!(
+        " Line {}-{} of {} ",
+        start + 1,
+        end,
+        total
+    );
+
+    frame.render_widget(
+        Paragraph::new(styled_lines),
+        inner,
+    );
+
+    // Render scroll position indicator at bottom-right of border
+    let info_width = scrollbar_info.len() as u16;
+    if area.width > info_width + 2 {
+        let info_rect = Rect {
+            x: area.x + area.width - info_width - 1,
+            y: area.y + area.height - 1,
+            width: info_width,
+            height: 1,
+        };
+        frame.render_widget(
+            Paragraph::new(Text::raw(scrollbar_info))
+                .style(Style::default().fg(Color::DarkGray)),
+            info_rect,
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Main container renderer
 // ---------------------------------------------------------------------------
 
 fn render_main(
     frame: &mut Frame,
     area: Rect,
-    state: &TuixState,
+    state: &mut TuixState,
     active_internal_app: &mut Option<InternalApp>,
     active_installed_dash: &mut Option<InstalledDashboard>,
 ) {
     let focused = state.focus == FocusTarget::Main;
+    let settings = crate::settings::persistence::load();
+    let accent_name = crate::settings::persistence::get_str(&settings, "appearance.accent_color", "Cyan");
+    let accent_color = crate::settings::pages::appearance::color_from_name(&accent_name);
+    let border_name = crate::settings::persistence::get_str(&settings, "appearance.border_style", "Rounded");
+    let border_type = crate::settings::pages::appearance::border_type_from_name(&border_name);
     let border_style = if focused {
-        Style::default().fg(Color::Cyan)
+        Style::default().fg(accent_color)
     } else {
         Style::default()
     };
 
-    if let Some(page) = &state.active_page {
+    if let Some(page) = &state.active_page.clone() {
         match page.as_str() {
-            "settings" => settings::page::render(frame, area, border_style),
+            "settings" => settings::page::render(frame, area, border_style, &mut state.settings),
             "touchscreen" => touchscreen::page::render(frame, area, border_style),
-            "system" | "taskmanager" => render_system_page(frame, area, state, border_style),
+            "system" | "taskmanager" => render_system_page(frame, area, state, border_style, border_type),
+            "logs" => render_logs_page(frame, area, state, border_style, border_type),
             _ => {}
         }
     } else if state.active_app.is_some() {
@@ -590,6 +765,29 @@ fn render_no_dashboard(frame: &mut Frame, area: Rect, border_style: Style) {
     );
 }
 
+fn render_status_bar(frame: &mut Frame, area: Rect) {
+    use sysinfo::System;
+    let mut sys = System::new_all();
+    sys.refresh_cpu_usage();
+    sys.refresh_memory();
+
+    let cpu: f32 = sys.cpus().iter().map(|c| c.cpu_usage()).sum::<f32>()
+        / sys.cpus().len().max(1) as f32;
+    let used_mb = sys.used_memory() / 1024 / 1024;
+    let total_mb = sys.total_memory() / 1024 / 1024;
+    let now = chrono::Local::now().format("%H:%M:%S").to_string();
+
+    let s = crate::settings::persistence::load();
+    let accent_name = crate::settings::persistence::get_str(&s, "appearance.accent_color", "Cyan");
+    let accent = crate::settings::pages::appearance::color_from_name(&accent_name);
+
+    let text = format!("  {}   CPU: {:.0}%   RAM: {}/{} MB  ", now, cpu, used_mb, total_mb);
+    frame.render_widget(
+        Paragraph::new(text).style(Style::default().fg(accent)),
+        area,
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Navbar key handling
 // ---------------------------------------------------------------------------
@@ -613,11 +811,7 @@ fn handle_navbar_key(
     active_internal_app: &mut Option<InternalApp>,
     active_installed_dash: &mut Option<InstalledDashboard>,
 ) -> NavResult {
-    if action == Action::Tab {
-        state.focus = FocusTarget::Main;
-        state.nav_expanded = false;
-        return NavResult::None;
-    }
+    // Tab focus toggle is now handled at the raw event level
 
     if action == Action::Quit {
         return NavResult::Quit;
@@ -777,6 +971,7 @@ fn execute_action(
     state.dropdown_cursor = 0;
 
     if let Some(name) = data.strip_prefix("dashboard:") {
+        logging::info(&format!("Navigated to dashboard: {}", name));
         state.active_dashboard = name.to_string();
         state.active_page = None;
         state.active_app = None;
@@ -786,23 +981,28 @@ fn execute_action(
         if let Some(meta) = dashboards_registry.get(name) {
             let dash_type = meta.get("type").and_then(|t| t.as_str()).unwrap_or("");
             if dash_type == "installed" {
-                let mut cmd: Vec<String> = meta
-                    .get("cmd")
-                    .and_then(|c| c.as_array())
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                            .collect()
-                    })
-                    .unwrap_or_default();
-
-                // Try local binary path first if the command isn't found in PATH
-                if let Some(local_bin) = meta.get("local_bin").and_then(|v| v.as_str()) {
-                    let local_path = std::path::Path::new(local_bin);
+                let source = meta.get("source").and_then(|s| s.as_str()).unwrap_or("global");
+                let cmd: Vec<String> = if source == "local" {
+                    // Run from local downloads path
+                    let local_bin = format!("downloads/dashboards/{}/target/release/{}", name, name);
+                    let local_path = std::path::Path::new(&local_bin);
                     if local_path.exists() {
-                        cmd = vec![local_bin.to_string()];
+                        vec![local_bin]
+                    } else {
+                        logging::error(&format!("Local binary not found for dashboard {}: {}", name, local_bin));
+                        vec![]
                     }
-                }
+                } else {
+                    // Run from global PATH (cargo install puts it in ~/.cargo/bin/)
+                    meta.get("cmd")
+                        .and_then(|c| c.as_array())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                                .collect()
+                        })
+                        .unwrap_or_default()
+                };
 
                 let label = meta
                     .get("label")
@@ -826,6 +1026,7 @@ fn execute_action(
             *active_installed_dash = None;
         }
     } else if let Some(name) = data.strip_prefix("app:") {
+        logging::info(&format!("Opened app: {}", name));
         let meta = apps_registry.get(name);
         let app_type = meta
             .and_then(|m| m.get("type"))
@@ -838,6 +1039,11 @@ fn execute_action(
                     let mut app = TextEditorApp::new();
                     app.start();
                     InternalApp::TextEditor(app)
+                }
+                "FileExplorer" => {
+                    let mut app = FileExplorerApp::new();
+                    app.start();
+                    InternalApp::FileExplorer(app)
                 }
                 _ => {
                     let mut app = CharacterSetApp::new();
@@ -868,13 +1074,36 @@ fn execute_action(
             state.focus = FocusTarget::Main;
         }
     } else if let Some(page_name) = data.strip_prefix("page:") {
+        logging::info(&format!("Opened page: {}", page_name));
+        if page_name == "logs" {
+            state.log_scroll = 0; // 0 = show bottom (most recent entries)
+        }
         state.active_page = Some(page_name.to_string());
         state.active_app = None;
         state.focus = FocusTarget::Main;
     } else if data == "system:shutdown" {
+        logging::info("System shutdown requested");
         return NavResult::Quit;
     } else if data == "system:restart" {
+        logging::info("System restart requested");
         return NavResult::Restart;
+    } else if data == "system:open_repo" {
+        logging::info("Opening TUIX Git repository");
+        let url = "https://github.com/benmulligan4/TUIX";
+        // Use spawn() (non-blocking) so TUIX doesn't freeze waiting for the browser
+        let spawned = if cfg!(target_os = "windows") {
+            Command::new("cmd").args(["/C", "start", "", url]).spawn().is_ok()
+        } else if cfg!(target_os = "macos") {
+            Command::new("open").arg(url).spawn().is_ok()
+        } else {
+            Command::new("xdg-open").arg(url).spawn().is_ok()
+        };
+        if spawned {
+            state.popup = Some(("Opening Git Repository...".to_string(), Instant::now()));
+        } else {
+            state.popup = Some((format!("Visit: {}", url), Instant::now()));
+            logging::warn(&format!("Could not open browser. Visit: {}", url));
+        }
     } else if let Some(branch_name) = data.strip_prefix("branch:") {
         // Switch git branch, rebuild, and re-launch
         if git_checkout(branch_name).is_ok() {
@@ -892,6 +1121,7 @@ fn execute_action(
 enum MainResult {
     None,
     Quit,
+    Restart,
     #[allow(dead_code)]
     RunForeground(Vec<String>),
 }
@@ -906,10 +1136,8 @@ fn handle_main_key(
         return MainResult::Quit;
     }
 
-    if action == Action::Tab {
-        state.focus = FocusTarget::Navbar;
-        return MainResult::None;
-    }
+    // Tab focus toggle is now handled at the raw event level
+    // using the configured toggle key. Don't handle Action::Tab here.
 
     // If an internal app has its OSK active, forward ALL mapped keys to it
     // (including Back/Q which normally closes the app — the OSK handles
@@ -928,21 +1156,28 @@ fn handle_main_key(
     }
 
     if action == Action::Back {
-        if state.active_page.is_some() {
+        // Settings page handles its own Back (pane switching)
+        if matches!(state.active_page.as_deref(), Some("settings")) {
+            // Handled in the settings navigation section below — don't return here
+        } else if state.active_page.is_some() {
             state.active_page = None;
             state.active_app = None;
+            return MainResult::None;
         } else if state.active_app.is_some() {
             if let Some(app) = active_internal_app {
                 app.stop();
             }
             state.active_app = None;
             *active_internal_app = None;
+            return MainResult::None;
         } else if active_installed_dash.is_some() {
             // Close the installed dashboard and go back to default
             *active_installed_dash = None;
             state.active_dashboard = "Dashboard-1".to_string();
+            return MainResult::None;
+        } else {
+            return MainResult::None;
         }
-        return MainResult::None;
     }
 
     // Forward keys to installed dashboard if active
@@ -976,6 +1211,125 @@ fn handle_main_key(
                 }
             }
             _ => {}
+        }
+        return MainResult::None;
+    }
+
+    // Logs page navigation
+    if matches!(state.active_page.as_deref(), Some("logs")) {
+        let total_lines = logging::read_log_lines().len();
+        match action {
+            // Up = scroll toward older entries (increase reverse offset from bottom)
+            Action::Up => {
+                let max_offset = total_lines.saturating_sub(1);
+                state.log_scroll = (state.log_scroll + 1).min(max_offset);
+            }
+            // Down = scroll toward newer entries (decrease reverse offset)
+            Action::Down => {
+                state.log_scroll = state.log_scroll.saturating_sub(1);
+            }
+            _ => {}
+        }
+        return MainResult::None;
+    }
+
+    // Settings page navigation
+    if matches!(state.active_page.as_deref(), Some("settings")) {
+        let ss = &mut state.settings;
+
+        // Key capture mode is now handled at the raw event level
+
+        if ss.in_right_pane {
+            // ---- Edit mode: Left/Right cycles the current multi-option setting ----
+            if ss.editing_setting {
+                match action {
+                    Action::Left => {
+                        settings::page::handle_setting_cycle(ss, false);
+                    }
+                    Action::Right => {
+                        settings::page::handle_setting_cycle(ss, true);
+                    }
+                    Action::Enter | Action::Back => {
+                        // Exit edit mode; Back exits without further action
+                        ss.editing_setting = false;
+                    }
+                    _ => {}
+                }
+                return MainResult::None;
+            }
+
+            // ---- Normal right pane navigation ----
+            let count = settings::page::current_item_count(ss);
+            match action {
+                Action::Up => {
+                    if ss.right_cursor > 0 {
+                        ss.right_cursor -= 1;
+                    }
+                }
+                Action::Down => {
+                    if count > 0 && ss.right_cursor < count.saturating_sub(1) {
+                        ss.right_cursor += 1;
+                    }
+                }
+                // Left/Right (including numpad 4/6) directly cycle multi-option settings
+                Action::Left => {
+                    if settings::page::is_edit_mode_item(ss) {
+                        settings::page::handle_setting_cycle(ss, false);
+                    }
+                }
+                Action::Right => {
+                    if settings::page::is_edit_mode_item(ss) {
+                        settings::page::handle_setting_cycle(ss, true);
+                    }
+                }
+                Action::Enter => {
+                    if settings::page::is_edit_mode_item(ss) {
+                        // Enter edit mode to show ◄ ► arrows
+                        ss.editing_setting = true;
+                    } else {
+                        match settings::page::handle_right_pane_enter(ss) {
+                            settings::page::SettingsAction::Quit => return MainResult::Quit,
+                            settings::page::SettingsAction::Restart => return MainResult::Restart,
+                            settings::page::SettingsAction::ShowPopup(msg) => {
+                                state.popup = Some((msg, Instant::now()));
+                            }
+                            settings::page::SettingsAction::None => {}
+                        }
+                    }
+                }
+                Action::Back => {
+                    ss.in_right_pane = false;
+                }
+                _ => {}
+            }
+        } else {
+            // In left pane — navigate categories
+            let cat_count = SettingsCategory::ALL.len();
+            match action {
+                Action::Up => {
+                    if ss.category_cursor > 0 {
+                        ss.category_cursor -= 1;
+                    }
+                }
+                Action::Down => {
+                    if ss.category_cursor < cat_count.saturating_sub(1) {
+                        ss.category_cursor += 1;
+                    }
+                }
+                Action::Enter | Action::Right => {
+                    let cat = ss.selected_category();
+                    if cat.is_available() || cat.is_pi_only() {
+                        ss.in_right_pane = true;
+                        ss.reset_right_pane();
+                    }
+                }
+                Action::Back => {
+                    // Back from left pane closes the settings page
+                    state.active_page = None;
+                    return MainResult::None;
+                }
+                _ => {}
+            }
         }
         return MainResult::None;
     }
@@ -1115,6 +1469,9 @@ pub fn main() {
 fn run_app() -> ExitAction {
     std::fs::create_dir_all("logs").ok();
 
+    logging::init();
+    logging::info("TUIX started");
+
     let settings_map = registry::load_settings();
     let dashboards = registry::load_dashboards();
     let apps_registry = registry::load_apps();
@@ -1125,12 +1482,39 @@ fn run_app() -> ExitAction {
         .unwrap_or("Dashboard-1")
         .to_string();
 
-    let mut state = TuixState::new(default_dashboard);
+    let mut state = TuixState::new(default_dashboard.clone());
     let nav_items = build_nav_items(&dashboards, &apps_registry);
     let mut active_internal_app: Option<InternalApp> = None;
     let mut active_installed_dash: Option<InstalledDashboard> = None;
 
     let mut exit_action = ExitAction::Quit;
+    // Auto-launch default dashboard if it's an installed (third-party) one
+    if let Some(meta) = dashboards.get(&default_dashboard) {
+        let dash_type = meta.get("type").and_then(|t| t.as_str()).unwrap_or("");
+        if dash_type == "installed" {
+            let source = meta.get("source").and_then(|s| s.as_str()).unwrap_or("global");
+            let cmd: Vec<String> = if source == "local" {
+                let local_bin = format!("downloads/dashboards/{}/target/release/{}", default_dashboard, default_dashboard);
+                if std::path::Path::new(&local_bin).exists() {
+                    vec![local_bin]
+                } else {
+                    meta.get("cmd").and_then(|c| c.as_array())
+                        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+                        .unwrap_or_default()
+                }
+            } else {
+                meta.get("cmd").and_then(|c| c.as_array())
+                    .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+                    .unwrap_or_default()
+            };
+            let label = meta.get("label").and_then(|v| v.as_str()).unwrap_or(&default_dashboard).to_string();
+            if !cmd.is_empty() {
+                active_installed_dash = InstalledDashboard::start(&default_dashboard, &label, &cmd, 80, 24);
+            }
+        }
+    }
+
+    let mut should_restart = false;
 
     // Setup terminal
     enable_raw_mode().expect("Failed to enable raw mode");
@@ -1143,23 +1527,65 @@ fn run_app() -> ExitAction {
         // Draw UI
         terminal
             .draw(|frame| {
+                let status_bar_on = {
+                    let s = crate::settings::persistence::load();
+                    crate::settings::persistence::get_bool(&s, "appearance.status_bar_enabled", false)
+                };
+                let constraints: Vec<Constraint> = if status_bar_on {
+                    vec![Constraint::Length(1), Constraint::Fill(1), Constraint::Length(1)]
+                } else {
+                    vec![Constraint::Length(1), Constraint::Fill(1)]
+                };
                 let rows = Layout::default()
                     .direction(Direction::Vertical)
-                    .constraints([Constraint::Length(1), Constraint::Fill(1)])
+                    .constraints(constraints)
                     .split(frame.area());
 
                 // 1. Draw main container
-                render_main(frame, rows[1], &state, &mut active_internal_app, &mut active_installed_dash);
+                render_main(frame, rows[1], &mut state, &mut active_internal_app, &mut active_installed_dash);
 
                 // 2. Draw navbar label row
                 render_navbar(frame, rows[0], &nav_items, &state);
 
-                // 3. Draw dropdown LAST (overlays main container)
+                // 3. Draw status bar if enabled
+                if status_bar_on {
+                    render_status_bar(frame, rows[2]);
+                }
+
+                // 4. Draw dropdown LAST (overlays main container)
                 if state.nav_expanded {
                     render_dropdown(frame, rows[1], &nav_items, &state);
                 }
+
+                // 4. Draw popup notification if active
+                if let Some((ref msg, ref created)) = state.popup {
+                    if created.elapsed() < Duration::from_secs(3) {
+                        let popup_width = (msg.len() + 4) as u16;
+                        let area = frame.area();
+                        let popup_rect = Rect {
+                            x: area.width.saturating_sub(popup_width) / 2,
+                            y: area.height / 2,
+                            width: popup_width.min(area.width),
+                            height: 3,
+                        };
+                        frame.render_widget(Clear, popup_rect);
+                        frame.render_widget(
+                            Paragraph::new(Text::raw(format!("  {}  ", msg)))
+                                .style(Style::default().fg(Color::White).bg(Color::DarkGray))
+                                .block(Block::default().borders(Borders::ALL).style(Style::default().bg(Color::DarkGray))),
+                            popup_rect,
+                        );
+                    }
+                }
             })
             .expect("Failed to draw frame");
+
+        // Clear expired popup
+        if let Some((_, created)) = &state.popup {
+            if created.elapsed() >= Duration::from_secs(3) {
+                state.popup = None;
+            }
+        }
 
         // Poll for events with timeout
         if !event::poll(Duration::from_millis(100)).unwrap_or(false) {
@@ -1176,6 +1602,173 @@ fn run_app() -> ExitAction {
             Event::Key(key) if key.kind == KeyEventKind::Press => key,
             _ => continue,
         };
+
+        // ---- Intercept: Settings awaiting_key mode (captures ANY key) ----
+        if state.focus == FocusTarget::Main
+            && matches!(state.active_page.as_deref(), Some("settings"))
+            && state.settings.awaiting_key
+        {
+            let key_name = match key_event.code {
+                crossterm::event::KeyCode::Tab => "Tab",
+                crossterm::event::KeyCode::Enter => "Enter",
+                crossterm::event::KeyCode::Esc => "Esc",
+                crossterm::event::KeyCode::Backspace => "Backspace",
+                crossterm::event::KeyCode::Up => "Up",
+                crossterm::event::KeyCode::Down => "Down",
+                crossterm::event::KeyCode::Left => "Left",
+                crossterm::event::KeyCode::Right => "Right",
+                crossterm::event::KeyCode::Char(ch) => {
+                    match ch {
+                        'a' => "A", 'b' => "B", 'c' => "C", 'd' => "D",
+                        'e' => "E", 'f' => "F", 'g' => "G", 'h' => "H",
+                        'i' => "I", 'j' => "J", 'k' => "K", 'l' => "L",
+                        'm' => "M", 'n' => "N", 'o' => "O", 'p' => "P",
+                        'q' => "Q", 'r' => "R", 's' => "S", 't' => "T",
+                        'u' => "U", 'v' => "V", 'w' => "W", 'x' => "X",
+                        'y' => "Y", 'z' => "Z", '0' => "0", '1' => "1",
+                        '2' => "2", '3' => "3", '4' => "4", '5' => "5",
+                        '6' => "6", '7' => "7", '8' => "8", '9' => "9",
+                        _ => "Tab",
+                    }
+                }
+                _ => "Tab",
+            };
+            crate::settings::pages::button_mapping::capture_key(&mut state.settings, key_name);
+            continue;
+        }
+
+        // ---- Intercept: Shift+Tab for terminal output focus (Scripts & Git) ----
+        if matches!(key_event.code, crossterm::event::KeyCode::BackTab)
+            && state.focus == FocusTarget::Main
+            && matches!(state.active_page.as_deref(), Some("settings"))
+            && matches!(state.settings.selected_category(), SettingsCategory::Git)
+        {
+            state.settings.terminal_focused = !state.settings.terminal_focused;
+            continue;
+        }
+
+        // When terminal output is focused, Up/Down/W/S scroll it
+        if state.settings.terminal_focused
+            && state.focus == FocusTarget::Main
+            && matches!(state.active_page.as_deref(), Some("settings"))
+        {
+            let total = state.settings.terminal_output.len();
+            match key_event.code {
+                crossterm::event::KeyCode::Up | crossterm::event::KeyCode::Char('w') => {
+                    if state.settings.terminal_scroll > 0 {
+                        state.settings.terminal_scroll -= 1;
+                    }
+                }
+                crossterm::event::KeyCode::Down | crossterm::event::KeyCode::Char('s') => {
+                    if state.settings.terminal_scroll < total.saturating_sub(1) {
+                        state.settings.terminal_scroll += 1;
+                    }
+                }
+                _ => {}
+            }
+            continue;
+        }
+
+        // ---- Helper: check if key matches configured focus toggle key ----
+        let toggle_key_name = {
+            let s = crate::settings::persistence::load();
+            crate::settings::persistence::get_str(&s, "button_mapping.focus_toggle_key", "Tab")
+        };
+        let is_toggle_key = match key_event.code {
+            crossterm::event::KeyCode::Tab => toggle_key_name == "Tab",
+            crossterm::event::KeyCode::Enter => toggle_key_name == "Enter",
+            crossterm::event::KeyCode::Esc => toggle_key_name == "Esc",
+            crossterm::event::KeyCode::Backspace => toggle_key_name == "Backspace",
+            crossterm::event::KeyCode::Char(ch) => {
+                let upper: String = ch.to_uppercase().collect();
+                upper == toggle_key_name
+            }
+            _ => false,
+        };
+
+        // If the configured toggle key is pressed, switch focus
+        if is_toggle_key {
+            state.focus = match state.focus {
+                FocusTarget::Navbar => FocusTarget::Main,
+                FocusTarget::Main => FocusTarget::Navbar,
+            };
+            state.nav_expanded = false;
+            continue;
+        }
+
+        // ---- Intercept: Numpad navigation (always active) ----
+        // 8=Up, 2=Down, 4=Left, 6=Right, 7=Back/Q, 9=Enter
+        if let crossterm::event::KeyCode::Char(ch) = key_event.code {
+            let nav_action = match ch {
+                '8' => Some(Action::Up),
+                '2' => Some(Action::Down),
+                '4' => Some(Action::Left),
+                '6' => Some(Action::Right),
+                '7' => Some(Action::Back),
+                '9' => Some(Action::Enter),
+                _ => None,
+            };
+            if let Some(a) = nav_action {
+                if state.focus == FocusTarget::Navbar {
+                    match handle_navbar_key(
+                        a, &mut state, &nav_items, &apps_registry, &dashboards,
+                        &mut active_internal_app, &mut active_installed_dash,
+                    ) {
+                        NavResult::Quit => break,
+                        NavResult::Restart => { should_restart = true; break; }
+                        _ => {}
+                    }
+                } else {
+                    match handle_main_key(a, &mut state, &mut active_internal_app, &mut active_installed_dash) {
+                        MainResult::Quit => break,
+                        MainResult::Restart => { should_restart = true; break; }
+                        _ => {}
+                    }
+                }
+                continue;
+            }
+        }
+
+        // ---- Intercept: Hotkey number keys (1-9), any focus, no page/app active ----
+        if state.active_page.is_none()
+            && state.active_app.is_none()
+            && active_installed_dash.is_none()
+        {
+            if let crossterm::event::KeyCode::Char(ch) = key_event.code {
+                if ('1'..='9').contains(&ch) {
+                    let key_num = ch.to_digit(10).unwrap() as usize;
+                    let hotkey_settings = crate::settings::persistence::load();
+                    // Skip if numpad navigation is on (those digits are nav keys)
+                    // Numpad nav digits are always reserved — skip hotkey for them
+                    if !matches!(ch, '8' | '2' | '4' | '6' | '7' | '9') {
+                        let path = format!("hotkeys.key_{}", key_num);
+                        if let Some(val) = crate::settings::persistence::get(&hotkey_settings, &path) {
+                            if let Some(action_str) = val.as_str() {
+                                if !action_str.is_empty() && action_str != "None" {
+                                    let result = execute_action(
+                                        action_str,
+                                        &mut state,
+                                        &apps_registry,
+                                        &dashboards,
+                                        &mut active_internal_app,
+                                        &mut active_installed_dash,
+                                    );
+                                    match result {
+                                        NavResult::Quit => break,
+                                        NavResult::Restart => {
+                                            should_restart = true;
+                                            break;
+                                        }
+                                        _ => {}
+                                    }
+                                    continue;
+                                }
+                            }
+                        }
+                    } // end if !numpad_on
+                }
+            }
+        }
 
         // When an installed dashboard is active and main is focused,
         // forward raw key events directly to the PTY subprocess.
@@ -1195,6 +1788,39 @@ fn run_app() -> ExitAction {
                         _ => {
                             dash.send_key_event(key_event);
                             continue;
+                        }
+                    }
+                }
+            }
+        }
+
+        // When text editor is in typing_mode, forward raw character keys directly
+        if state.focus == FocusTarget::Main {
+            if let Some(InternalApp::TextEditor(ref mut editor)) = active_internal_app {
+                if editor.typing_mode {
+                    match key_event.code {
+                        crossterm::event::KeyCode::Char(ch) => {
+                            editor.insert_char(ch);
+                            continue;
+                        }
+                        crossterm::event::KeyCode::Backspace => {
+                            editor.backspace();
+                            continue;
+                        }
+                        crossterm::event::KeyCode::Esc => {
+                            editor.typing_mode = false;
+                            continue;
+                        }
+                        crossterm::event::KeyCode::Enter => {
+                            editor.insert_newline();
+                            continue;
+                        }
+                        crossterm::event::KeyCode::Tab => {
+                            state.focus = FocusTarget::Navbar;
+                            continue;
+                        }
+                        _ => {
+                            // Let arrow keys etc. go through map_key below
                         }
                     }
                 }
@@ -1243,6 +1869,10 @@ fn run_app() -> ExitAction {
         } else {
             match handle_main_key(action, &mut state, &mut active_internal_app, &mut active_installed_dash) {
                 MainResult::Quit => break,
+                MainResult::Restart => {
+                    should_restart = true;
+                    break;
+                }
                 MainResult::RunForeground(cmd) => {
                     disable_raw_mode().ok();
                     execute!(terminal.backend_mut(), LeaveAlternateScreen).ok();

@@ -1,6 +1,9 @@
 /// TUIX — shared enums, structs, and state containers.
 
 use chrono::{DateTime, Utc};
+use std::time::Instant;
+
+use crate::settings::state::SettingsState;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Action {
@@ -59,6 +62,13 @@ pub struct TuixState {
     pub submenu_cursor: usize,
     /// Cached submenu items: (label, action_string)
     pub submenu_items: Vec<(String, String)>,
+    /// Scroll offset for the log viewer — reverse offset from the bottom.
+    /// 0 = show the most recent (bottom) entries. N = scroll N lines toward the top.
+    pub log_scroll: usize,
+    /// Settings page UI state.
+    pub settings: SettingsState,
+    /// Temporary popup message (text, when it was set).
+    pub popup: Option<(String, Instant)>,
 }
 
 impl TuixState {
@@ -73,6 +83,9 @@ impl TuixState {
             nav_cursor: 0,
             nav_expanded: false,
             dropdown_cursor: 0,
+            log_scroll: 0,
+            settings: SettingsState::new(),
+            popup: None,
             submenu_open: false,
             submenu_cursor: 0,
             submenu_items: Vec::new(),

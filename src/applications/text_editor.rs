@@ -29,6 +29,9 @@ pub struct TextEditorApp {
     scroll_offset: usize,
     /// The on-screen keyboard.
     pub osk: OnScreenKeyboard,
+    /// Direct typing mode (when OSK is disabled in settings).
+    /// In this mode, physical keyboard chars are inserted directly.
+    pub typing_mode: bool,
 }
 
 impl TextEditorApp {
@@ -39,6 +42,7 @@ impl TextEditorApp {
             cursor_col: 0,
             scroll_offset: 0,
             osk: OnScreenKeyboard::new(),
+            typing_mode: false,
         }
     }
 
@@ -48,18 +52,19 @@ impl TextEditorApp {
         self.cursor_col = 0;
         self.scroll_offset = 0;
         self.osk = OnScreenKeyboard::new();
+        self.typing_mode = false;
     }
 
     pub fn stop(&mut self) {}
 
-    /// Returns true if the keyboard is active and consuming keys.
+    /// Returns true if the keyboard/typing mode is active and consuming keys.
     pub fn keyboard_active(&self) -> bool {
-        self.osk.visible
+        self.osk.visible || self.typing_mode
     }
 
     // ----- Text manipulation -----
 
-    fn insert_char(&mut self, ch: char) {
+    pub fn insert_char(&mut self, ch: char) {
         if ch == '\t' {
             // Insert 4 spaces for tab
             for _ in 0..4 {
@@ -72,7 +77,7 @@ impl TextEditorApp {
         self.cursor_col += ch.len_utf8();
     }
 
-    fn insert_newline(&mut self) {
+    pub fn insert_newline(&mut self) {
         let rest = self.lines[self.cursor_row][self.cursor_col..].to_string();
         self.lines[self.cursor_row].truncate(self.cursor_col);
         self.cursor_row += 1;
@@ -80,7 +85,7 @@ impl TextEditorApp {
         self.cursor_col = 0;
     }
 
-    fn backspace(&mut self) {
+    pub fn backspace(&mut self) {
         if self.cursor_col > 0 {
             // Find the previous char boundary
             let prev = self.lines[self.cursor_row][..self.cursor_col]
@@ -166,6 +171,21 @@ impl TextEditorApp {
                 OskResult::None => {}
             }
             None
+        } else if self.typing_mode {
+            // Direct typing mode — physical keyboard chars go into editor
+            match code {
+                "q" | "Q" => {
+                    // Esc/Q exits typing mode (back to navigation)
+                    self.typing_mode = false;
+                    None
+                }
+                "Up" => { self.move_cursor_up(); None }
+                "Down" => { self.move_cursor_down(); None }
+                "Left" => { self.move_cursor_left(); None }
+                "Right" => { self.move_cursor_right(); None }
+                "Enter" => { self.insert_newline(); None }
+                _ => None, // Single chars handled via raw key forwarding below
+            }
         } else {
             // Keyboard not active — editor navigation mode
             match code {
@@ -175,8 +195,16 @@ impl TextEditorApp {
                 "Left" => { self.move_cursor_left(); None }
                 "Right" => { self.move_cursor_right(); None }
                 "Enter" => {
-                    // Open the on-screen keyboard
-                    self.osk.show();
+                    // Check if OSK is enabled in settings
+                    let settings = crate::settings::persistence::load();
+                    let osk_enabled = crate::settings::persistence::get_bool(
+                        &settings, "utilities.onscreen_keyboard_enabled", true
+                    );
+                    if osk_enabled {
+                        self.osk.show();
+                    } else {
+                        self.typing_mode = true;
+                    }
                     None
                 }
                 _ => None,
