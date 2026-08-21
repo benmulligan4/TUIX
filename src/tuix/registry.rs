@@ -45,3 +45,16 @@ pub fn load_dashboards() -> HashMap<String, Value> {
 pub fn load_apps() -> HashMap<String, Value> {
     load("apps.json")
 }
+
+/// Return dict of {name: {label, category, ...}} from registered-apps.json.
+pub fn load_registered_apps() -> HashMap<String, Value> {
+    load("registered-apps.json")
+}
+
+/// Write an updated registry back to the config file.
+pub fn save_config(filename: &str, data: &HashMap<String, Value>) {
+    let path = config_dir().join(filename);
+    if let Ok(json) = serde_json::to_string_pretty(data) {
+        let _ = fs::write(path, json);
+    }
+}

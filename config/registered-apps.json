@@ -1,0 +1,28 @@
+{
+  "sigye": {
+    "label": "Sigye — Terminal Clock",
+    "description": "A feature-rich terminal clock with ASCII art fonts, animated backgrounds, and productivity timers. 6 display modes including Clock, Pomodoro, Timer, Stopwatch, World Clock, and Countdown. 40+ bundled FIGlet fonts, 18 color themes, 21 animated backgrounds, and desktop notifications.",
+    "category": "Dashboard",
+    "author": "am2rican5",
+    "version": "0.6.0",
+    "license": "MIT",
+    "repository": "https://github.com/am2rican5/sigye",
+    "crate_name": "sigye",
+    "cmd": ["sigye"],
+    "pre_installed": true,
+    "install_methods": ["global"]
+  },
+  "chess-tui": {
+    "label": "Chess TUI",
+    "description": "A free, open-source terminal chess game. Play with a friend locally, against any UCI chess engine (e.g. Stockfish), or online via Lichess. Features local 2-player mode, engine integration, Lichess multiplayer, helper menu, and custom skins. Runs on macOS, Linux, and Windows.",
+    "category": "Games",
+    "author": "thomas-mauran",
+    "version": "2.7.1",
+    "license": "MIT",
+    "repository": "https://github.com/thomas-mauran/chess-tui",
+    "crate_name": "chess-tui",
+    "cmd": ["chess-tui"],
+    "pre_installed": false,
+    "install_methods": ["global", "local"]
+  }
+}
