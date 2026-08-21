@@ -39,31 +39,27 @@ pub fn render(
 
     let inner = area.inner(Margin { horizontal: 1, vertical: 1 });
 
-    // If terminal visible, split into main area + terminal panel
-    let (main_area, terminal_area) = if state.terminal_visible {
-        let sections = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
-            .split(inner);
-        (sections[0], Some(sections[1]))
-    } else {
-        (inner, None)
-    };
-
     // Split main area into left and right panes
     let panes = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Length(32), Constraint::Fill(1)])
-        .split(main_area);
+        .split(inner);
 
     let left_area = panes[0];
-    let right_area = panes[1];
+    let full_right_area = panes[1];
 
     render_left_pane(frame, left_area, state, registered);
-    render_right_pane(frame, right_area, state, registered);
 
-    if let Some(term_area) = terminal_area {
-        render_terminal_panel(frame, term_area, state);
+    // If terminal visible, split right pane into preview + terminal
+    if state.terminal_visible {
+        let right_sections = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
+            .split(full_right_area);
+        render_right_pane(frame, right_sections[0], state, registered);
+        render_terminal_panel(frame, right_sections[1], state);
+    } else {
+        render_right_pane(frame, full_right_area, state, registered);
     }
 
     // Render overlay dialogs
@@ -102,16 +98,22 @@ fn render_left_pane(
     } else {
         Style::default().fg(Color::DarkGray)
     };
-    let search_text = if state.search_query.is_empty() {
-        " 🔍 Search apps...".to_string()
+    let search_text = if state.focus == AppStoreFocus::SearchBar {
+        if state.search_query.is_empty() {
+            " 🔍 Type to search...".to_string()
+        } else {
+            format!(" 🔍 {}▏", state.search_query)
+        }
+    } else if state.search_query.is_empty() {
+        " 🔍 Search [/]".to_string()
     } else {
         format!(" 🔍 {}", state.search_query)
     };
     lines.push(Line::from(Span::styled(search_text, search_style)));
     lines.push(Line::from(""));
 
-    // Sort/Filter controls
-    let sort_label = format!(" Sort: {} ▼", state.sort_mode.label());
+    // Sort/Filter controls with shortcut hints
+    let sort_label = format!(" [O] Sort: {} ▼", state.sort_mode.label());
     let sort_style = if state.focus == AppStoreFocus::SortDropdown {
         Style::default().fg(Color::Black).bg(Color::Cyan)
     } else {
@@ -122,14 +124,14 @@ fn render_left_pane(
     let installed_check = if state.filter_show_installed { "☑" } else { "☐" };
     let uninstalled_check = if state.filter_show_uninstalled { "☑" } else { "☐" };
     lines.push(Line::from(Span::styled(
-        format!(" {} Installed  {} Not installed", installed_check, uninstalled_check),
+        format!(" [I]{} Installed [U]{} Uninstalled", installed_check, uninstalled_check),
         Style::default().fg(Color::DarkGray),
     )));
 
     let filter_label = if state.filter_categories.is_empty() {
-        " Filter: All Categories ▼".to_string()
+        " [F] Filter: All Categories ▼".to_string()
     } else {
-        format!(" Filter: {} selected ▼", state.filter_categories.len())
+        format!(" [F] Filter: {} selected ▼", state.filter_categories.len())
     };
     let filter_style = if state.focus == AppStoreFocus::FilterDropdown {
         Style::default().fg(Color::Black).bg(Color::Cyan)
@@ -283,12 +285,9 @@ fn render_right_pane(
     // Install status
     let (status_text, status_color) = match &install_status {
         InstallStatus::NotInstalled => ("Not installed".to_string(), Color::DarkGray),
-        InstallStatus::Global(path) => (format!("Installed (PATH): {}", path), Color::Green),
-        InstallStatus::Local(path) => (format!("Installed (Downloads): {}", path), Color::Green),
-        InstallStatus::Both(g, l) => (
-            format!("Installed (Both)\n    PATH: {}\n    Downloads: {}", g, l),
-            Color::Green,
-        ),
+        InstallStatus::Global(path) => (format!("Installed to PATH: {}", path), Color::Green),
+        InstallStatus::Local(path) => (format!("Installed to Downloads: {}", path), Color::Green),
+        InstallStatus::Both(_, _) => ("Installed to Both".to_string(), Color::Green),
     };
 
     lines.push(Line::from(vec![
@@ -296,7 +295,6 @@ fn render_right_pane(
         Span::styled(&status_text, Style::default().fg(status_color)),
     ]));
 
-    // Show additional path lines for "Both" status
     if let InstallStatus::Both(g, l) = &install_status {
         lines.push(Line::from(Span::styled(
             format!("    PATH:      {}", g),

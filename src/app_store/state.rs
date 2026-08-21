@@ -1,6 +1,7 @@
 /// App Store state — enums and structs for the App Store UI.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}};
 use serde_json::Value;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -100,6 +101,16 @@ pub struct AppStoreState {
     pub install_statuses: HashMap<String, InstallStatus>,
     pub right_action_cursor: usize,
     pub in_right_actions: bool,
+    /// Shared output buffer for background install/uninstall thread
+    pub thread_output: Arc<Mutex<Vec<String>>>,
+    /// Signals that the background operation has completed
+    pub thread_done: Arc<AtomicBool>,
+    /// The install location used for the current operation (for post-install config update)
+    pub pending_install_location: Option<InstallLocation>,
+    /// The app key for the current background operation
+    pub pending_op_key: Option<String>,
+    /// Whether the pending operation is an install (true) or uninstall (false)
+    pub pending_is_install: bool,
 }
 
 impl AppStoreState {
@@ -133,11 +144,55 @@ impl AppStoreState {
             install_statuses: HashMap::new(),
             right_action_cursor: 0,
             in_right_actions: false,
+            thread_output: Arc::new(Mutex::new(Vec::new())),
+            thread_done: Arc::new(AtomicBool::new(false)),
+            pending_install_location: None,
+            pending_op_key: None,
+            pending_is_install: false,
         }
     }
 
     pub fn selected_app_key(&self) -> Option<&String> {
         self.computed_app_list.get(self.left_cursor)
+    }
+
+    /// Sync output from background thread and check completion.
+    /// Returns true if the operation just completed.
+    pub fn poll_operation(&mut self) -> bool {
+        if !self.operation_running {
+            return false;
+        }
+        // Sync output from thread
+        if let Ok(mut buf) = self.thread_output.try_lock() {
+            if !buf.is_empty() {
+                self.terminal_output.append(&mut *buf);
+                // Auto-scroll to bottom
+                let visible = 10usize; // approximate
+                self.terminal_scroll = self.terminal_output.len().saturating_sub(visible);
+            }
+        }
+        // Check completion
+        if self.thread_done.load(Ordering::Relaxed) {
+            self.operation_running = false;
+            // Final sync
+            if let Ok(mut buf) = self.thread_output.try_lock() {
+                self.terminal_output.append(&mut *buf);
+            }
+            return true;
+        }
+        false
+    }
+
+    /// Start a new background operation (resets shared state).
+    pub fn start_operation(&mut self, key: String, is_install: bool, location: Option<InstallLocation>) {
+        self.terminal_output.clear();
+        self.terminal_visible = true;
+        self.operation_running = true;
+        self.pending_op_key = Some(key);
+        self.pending_is_install = is_install;
+        self.pending_install_location = location;
+        self.thread_output = Arc::new(Mutex::new(Vec::new()));
+        self.thread_done = Arc::new(AtomicBool::new(false));
     }
 
     pub fn reset_right_pane(&mut self) {

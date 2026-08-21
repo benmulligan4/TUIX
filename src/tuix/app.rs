@@ -930,6 +930,38 @@ fn handle_main_key(
     active_installed_dash: &mut Option<InstalledDashboard>,
     registered_apps: &std::collections::HashMap<String, Value>,
 ) -> MainResult {
+    // App store page handles its own Quit/Back (pane/dialog switching)
+    if matches!(state.active_page.as_deref(), Some("appstore")) {
+        if action == Action::Quit {
+            // Esc in appstore: close dialogs or navigate back, don't quit TUIX
+            let ss = &mut state.app_store;
+            if ss.confirm_dialog.is_some() {
+                ss.confirm_dialog = None;
+                ss.confirm_cursor = 0;
+            } else if ss.install_location_dialog {
+                ss.install_location_dialog = false;
+            } else if ss.sort_dropdown_open {
+                ss.sort_dropdown_open = false;
+                ss.focus = crate::app_store::state::AppStoreFocus::LeftPane;
+            } else if ss.filter_dropdown_open {
+                ss.filter_dropdown_open = false;
+                ss.focus = crate::app_store::state::AppStoreFocus::LeftPane;
+            } else if ss.focus == crate::app_store::state::AppStoreFocus::RightPane {
+                ss.focus = crate::app_store::state::AppStoreFocus::LeftPane;
+                ss.in_right_actions = false;
+            } else if ss.focus == crate::app_store::state::AppStoreFocus::SearchBar {
+                ss.search_query.clear();
+                ss.focus = crate::app_store::state::AppStoreFocus::LeftPane;
+                ss.recompute_app_list(registered_apps);
+            } else {
+                state.active_page = None;
+            }
+            return MainResult::None;
+        }
+        handle_appstore_key(action, state, registered_apps);
+        return MainResult::None;
+    }
+
     if action == Action::Quit {
         return MainResult::Quit;
     }
@@ -954,9 +986,11 @@ fn handle_main_key(
     }
 
     if action == Action::Back {
-        // Settings page handles its own Back (pane switching)
+        // Settings and App Store pages handle their own Back (pane switching)
         if matches!(state.active_page.as_deref(), Some("settings")) {
             // Handled in the settings navigation section below — don't return here
+        } else if matches!(state.active_page.as_deref(), Some("appstore")) {
+            // Already handled above — should not reach here
         } else if state.active_page.is_some() {
             state.active_page = None;
             state.active_app = None;
@@ -1177,38 +1211,51 @@ fn handle_appstore_key(
             Action::Right => { ss.confirm_cursor = 1; }
             Action::Enter => {
                 if ss.confirm_cursor == 0 {
-                    // Yes — execute uninstall
+                    // Yes — execute uninstall in background
                     let confirm = ss.confirm_dialog.take().unwrap();
-                    ss.terminal_output.clear();
-                    ss.terminal_visible = true;
-                    ss.operation_running = true;
 
                     match confirm {
                         ConfirmAction::UninstallGlobal(ref key) => {
                             let meta = registered_apps.get(key.as_str());
                             let crate_name = meta
                                 .and_then(|m| m.get("crate_name").and_then(|v| v.as_str()))
-                                .unwrap_or(key);
+                                .unwrap_or(key)
+                                .to_string();
                             let category = meta
                                 .and_then(|m| m.get("category").and_then(|v| v.as_str()))
-                                .unwrap_or("Other");
-                            app_store::actions::uninstall_global(crate_name, &mut ss.terminal_output);
-                            app_store::actions::remove_from_config(key, category);
+                                .unwrap_or("Other")
+                                .to_string();
+                            ss.start_operation(key.clone(), false, None);
+                            let output = ss.thread_output.clone();
+                            let done = ss.thread_done.clone();
+                            let key_clone = key.clone();
+                            std::thread::spawn(move || {
+                                app_store::actions::uninstall_global(&crate_name, &mut Vec::new());
+                                app_store::actions::push_output(&output, format!("✓ Uninstalled {} from PATH", key_clone));
+                                app_store::actions::remove_from_config(&key_clone, &category);
+                                done.store(true, std::sync::atomic::Ordering::Relaxed);
+                            });
                         }
                         ConfirmAction::UninstallLocal(ref key) => {
                             let meta = registered_apps.get(key.as_str());
                             let category = meta
                                 .and_then(|m| m.get("category").and_then(|v| v.as_str()))
-                                .unwrap_or("Other");
-                            app_store::actions::uninstall_local(key, category, &mut ss.terminal_output);
-                            app_store::actions::remove_from_config(key, category);
+                                .unwrap_or("Other")
+                                .to_string();
+                            ss.start_operation(key.clone(), false, None);
+                            let output = ss.thread_output.clone();
+                            let done = ss.thread_done.clone();
+                            let key_clone = key.clone();
+                            let category_clone = category.clone();
+                            std::thread::spawn(move || {
+                                app_store::actions::uninstall_local(&key_clone, &category_clone, &mut Vec::new());
+                                app_store::actions::push_output(&output, format!("✓ Uninstalled {} from Downloads", key_clone));
+                                app_store::actions::remove_from_config(&key_clone, &category);
+                                done.store(true, std::sync::atomic::Ordering::Relaxed);
+                            });
                         }
                         ConfirmAction::UninstallChoose(_) => {}
                     }
-
-                    ss.install_statuses = app_store::actions::refresh_all_statuses(registered_apps);
-                    ss.recompute_app_list(registered_apps);
-                    ss.operation_running = false;
                 } else {
                     ss.confirm_dialog = None;
                 }
@@ -1242,26 +1289,21 @@ fn handle_appstore_key(
 
                 if let Some(key) = ss.selected_app_key().cloned() {
                     if let Some(meta) = registered_apps.get(&key) {
-                        ss.terminal_output.clear();
-                        ss.terminal_visible = true;
-                        ss.operation_running = true;
+                        ss.start_operation(key.clone(), true, Some(location));
+                        let output = ss.thread_output.clone();
+                        let done = ss.thread_done.clone();
 
                         match location {
                             InstallLocation::Global => {
-                                let crate_name = meta.get("crate_name").and_then(|v| v.as_str()).unwrap_or(&key);
-                                app_store::actions::install_global(crate_name, &mut ss.terminal_output);
+                                let crate_name = meta.get("crate_name").and_then(|v| v.as_str()).unwrap_or(&key).to_string();
+                                app_store::actions::spawn_install_global(&crate_name, output, done);
                             }
                             InstallLocation::Local => {
-                                let repo = meta.get("repository").and_then(|v| v.as_str()).unwrap_or("");
-                                let category = meta.get("category").and_then(|v| v.as_str()).unwrap_or("Other");
-                                app_store::actions::install_local(&key, repo, category, &mut ss.terminal_output);
+                                let repo = meta.get("repository").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                                let category = meta.get("category").and_then(|v| v.as_str()).unwrap_or("Other").to_string();
+                                app_store::actions::spawn_install_local(&key, &repo, &category, output, done);
                             }
                         }
-
-                        app_store::actions::add_to_config(&key, meta, &location);
-                        ss.install_statuses = app_store::actions::refresh_all_statuses(registered_apps);
-                        ss.recompute_app_list(registered_apps);
-                        ss.operation_running = false;
                     }
                 }
             }
@@ -1369,7 +1411,7 @@ fn handle_appstore_key(
                 Action::Enter | Action::Right => {
                     if !ss.computed_app_list.is_empty() {
                         ss.focus = AppStoreFocus::RightPane;
-                        ss.in_right_actions = false;
+                        ss.in_right_actions = true;
                         ss.right_action_cursor = 0;
                     }
                 }
@@ -1480,27 +1522,21 @@ fn handle_appstore_action(
                         .unwrap_or_else(|| vec![InstallLocation::Global]);
 
                     if methods.len() == 1 {
-                        // Only one method, install directly
-                        ss.terminal_output.clear();
-                        ss.terminal_visible = true;
-                        ss.operation_running = true;
+                        ss.start_operation(key.clone(), true, Some(methods[0]));
+                        let output = ss.thread_output.clone();
+                        let done = ss.thread_done.clone();
 
                         match methods[0] {
                             InstallLocation::Global => {
-                                let crate_name = meta.get("crate_name").and_then(|v| v.as_str()).unwrap_or(&key);
-                                app_store::actions::install_global(crate_name, &mut ss.terminal_output);
+                                let crate_name = meta.get("crate_name").and_then(|v| v.as_str()).unwrap_or(&key).to_string();
+                                app_store::actions::spawn_install_global(&crate_name, output, done);
                             }
                             InstallLocation::Local => {
-                                let repo = meta.get("repository").and_then(|v| v.as_str()).unwrap_or("");
-                                let category = meta.get("category").and_then(|v| v.as_str()).unwrap_or("Other");
-                                app_store::actions::install_local(&key, repo, category, &mut ss.terminal_output);
+                                let repo = meta.get("repository").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                                let category = meta.get("category").and_then(|v| v.as_str()).unwrap_or("Other").to_string();
+                                app_store::actions::spawn_install_local(&key, &repo, &category, output, done);
                             }
                         }
-
-                        app_store::actions::add_to_config(&key, meta, &methods[0]);
-                        ss.install_statuses = app_store::actions::refresh_all_statuses(registered_apps);
-                        ss.recompute_app_list(registered_apps);
-                        ss.operation_running = false;
                     } else {
                         ss.available_install_methods = methods;
                         ss.install_location_cursor = 0;
@@ -1665,6 +1701,35 @@ fn run_app() -> bool {
     let mut terminal = Terminal::new(backend).expect("Failed to create terminal");
 
     loop {
+        // Poll background app store operation
+        if state.app_store.operation_running {
+            let just_finished = state.app_store.poll_operation();
+            if just_finished {
+                // Operation completed — update config and show popup
+                if let Some(ref key) = state.app_store.pending_op_key.clone() {
+                    if state.app_store.pending_is_install {
+                        if let Some(location) = state.app_store.pending_install_location {
+                            if let Some(meta) = registered_apps.get(key) {
+                                app_store::actions::add_to_config(key, meta, &location);
+                            }
+                        }
+                        let loc_label = match state.app_store.pending_install_location {
+                            Some(crate::app_store::state::InstallLocation::Global) => "PATH",
+                            Some(crate::app_store::state::InstallLocation::Local) => "Downloads",
+                            None => "unknown",
+                        };
+                        state.popup = Some((format!("Installed {} to {}", key, loc_label), Instant::now()));
+                    } else {
+                        state.popup = Some((format!("Uninstalled {}", key), Instant::now()));
+                    }
+                    state.app_store.install_statuses = app_store::actions::refresh_all_statuses(&registered_apps);
+                    state.app_store.recompute_app_list(&registered_apps);
+                }
+                state.app_store.pending_op_key = None;
+                state.app_store.pending_install_location = None;
+            }
+        }
+
         // Draw UI
         terminal
             .draw(|frame| {
@@ -2083,7 +2148,17 @@ fn run_app() -> bool {
         };
 
         if action == Action::Quit {
-            break;
+            // Don't quit TUIX when in the app store — close the page instead
+            if matches!(state.active_page.as_deref(), Some("appstore")) {
+                if state.focus == FocusTarget::Navbar {
+                    // Esc from navbar while appstore is open: close appstore
+                    state.active_page = None;
+                    continue;
+                }
+                // Fall through to handle_main_key below
+            } else {
+                break;
+            }
         }
 
         if state.focus == FocusTarget::Navbar {
