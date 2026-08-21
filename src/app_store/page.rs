@@ -229,6 +229,7 @@ fn render_right_pane(
     let license = meta.get("license").and_then(|v| v.as_str()).unwrap_or("—");
     let description = meta.get("description").and_then(|v| v.as_str()).unwrap_or("");
     let repository = meta.get("repository").and_then(|v| v.as_str()).unwrap_or("");
+    let is_pre_installed = meta.get("pre_installed").and_then(|v| v.as_bool()).unwrap_or(false);
 
     let install_status = state
         .install_statuses
@@ -324,7 +325,7 @@ fn render_right_pane(
     lines.push(Line::from(Span::styled("  [ Open Repository ]", repo_style)));
     action_idx += 1;
 
-    // Install / Uninstall buttons based on status
+    // Install / Uninstall buttons based on status and pre_installed flag
     match &install_status {
         InstallStatus::NotInstalled => {
             let install_style = if in_actions && state.right_action_cursor == action_idx {
@@ -335,12 +336,25 @@ fn render_right_pane(
             lines.push(Line::from(Span::styled("  [ Install ]", install_style)));
         }
         InstallStatus::Global(_) => {
-            let uninstall_style = if in_actions && state.right_action_cursor == action_idx {
-                Style::default().fg(Color::Black).bg(Color::Cyan)
+            if is_pre_installed {
+                lines.push(Line::from(Span::styled(
+                    "  (Pre-installed — cannot uninstall from PATH)",
+                    Style::default().fg(Color::DarkGray),
+                )));
+                let install_local_style = if in_actions && state.right_action_cursor == action_idx {
+                    Style::default().fg(Color::Black).bg(Color::Cyan)
+                } else {
+                    Style::default().fg(Color::Green)
+                };
+                lines.push(Line::from(Span::styled("  [ Install to Downloads ]", install_local_style)));
             } else {
-                Style::default().fg(Color::Red)
-            };
-            lines.push(Line::from(Span::styled("  [ Uninstall from PATH ]", uninstall_style)));
+                let uninstall_style = if in_actions && state.right_action_cursor == action_idx {
+                    Style::default().fg(Color::Black).bg(Color::Cyan)
+                } else {
+                    Style::default().fg(Color::Red)
+                };
+                lines.push(Line::from(Span::styled("  [ Uninstall from PATH ]", uninstall_style)));
+            }
             action_idx += 1;
 
             let open_style = if in_actions && state.right_action_cursor == action_idx {
@@ -367,13 +381,20 @@ fn render_right_pane(
             lines.push(Line::from(Span::styled("  [ Open Install Location ]", open_style)));
         }
         InstallStatus::Both(_, _) => {
-            let uninstall_path_style = if in_actions && state.right_action_cursor == action_idx {
-                Style::default().fg(Color::Black).bg(Color::Cyan)
+            if !is_pre_installed {
+                let uninstall_path_style = if in_actions && state.right_action_cursor == action_idx {
+                    Style::default().fg(Color::Black).bg(Color::Cyan)
+                } else {
+                    Style::default().fg(Color::Red)
+                };
+                lines.push(Line::from(Span::styled("  [ Uninstall from PATH ]", uninstall_path_style)));
+                action_idx += 1;
             } else {
-                Style::default().fg(Color::Red)
-            };
-            lines.push(Line::from(Span::styled("  [ Uninstall from PATH ]", uninstall_path_style)));
-            action_idx += 1;
+                lines.push(Line::from(Span::styled(
+                    "  (Pre-installed — cannot uninstall from PATH)",
+                    Style::default().fg(Color::DarkGray),
+                )));
+            }
 
             let uninstall_local_style = if in_actions && state.right_action_cursor == action_idx {
                 Style::default().fg(Color::Black).bg(Color::Cyan)
@@ -690,11 +711,23 @@ fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
 }
 
 /// Get the number of action buttons for the current app's install status.
-pub fn action_count(status: &InstallStatus) -> usize {
+pub fn action_count(status: &InstallStatus, is_pre_installed: bool) -> usize {
     match status {
         InstallStatus::NotInstalled => 2,    // Open Repo, Install
-        InstallStatus::Global(_) => 3,       // Open Repo, Uninstall, Open Location
+        InstallStatus::Global(_) => {
+            if is_pre_installed {
+                3  // Open Repo, Install to Downloads, Open Location
+            } else {
+                3  // Open Repo, Uninstall, Open Location
+            }
+        }
         InstallStatus::Local(_) => 3,        // Open Repo, Uninstall, Open Location
-        InstallStatus::Both(_, _) => 5,      // Open Repo, Uninstall PATH, Uninstall Downloads, Open PATH, Open Downloads
+        InstallStatus::Both(_, _) => {
+            if is_pre_installed {
+                4  // Open Repo, Uninstall Downloads, Open PATH, Open Downloads
+            } else {
+                5  // Open Repo, Uninstall PATH, Uninstall Downloads, Open PATH, Open Downloads
+            }
+        }
     }
 }

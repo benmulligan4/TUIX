@@ -10,7 +10,7 @@
     "crate_name": "sigye",
     "cmd": ["sigye"],
     "pre_installed": true,
-    "install_methods": ["global"]
+    "install_methods": ["global", "local"]
   },
   "chess-tui": {
     "label": "Chess TUI",

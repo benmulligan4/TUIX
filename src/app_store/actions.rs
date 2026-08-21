@@ -367,28 +367,66 @@ pub fn push_output(buf: &Arc<Mutex<Vec<String>>>, line: String) {
     }
 }
 
+/// Run a command, streaming stdout and stderr line-by-line into the shared buffer.
+fn run_streaming(cmd: &str, args: &[&str], output: &Arc<Mutex<Vec<String>>>) -> bool {
+    use std::io::BufRead;
+    use std::process::Stdio;
+
+    push_output(output, format!("$ {} {}", cmd, args.join(" ")));
+
+    let mut child = match Command::new(cmd)
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            push_output(output, format!("Error: {}", e));
+            return false;
+        }
+    };
+
+    // Read stderr in a thread (cargo writes progress here)
+    let stderr = child.stderr.take();
+    let out_clone = output.clone();
+    let stderr_handle = thread::spawn(move || {
+        if let Some(stderr) = stderr {
+            let reader = std::io::BufReader::new(stderr);
+            for line in reader.lines() {
+                if let Ok(l) = line {
+                    push_output(&out_clone, l);
+                }
+            }
+        }
+    });
+
+    // Read stdout in main thread
+    if let Some(stdout) = child.stdout.take() {
+        let reader = std::io::BufReader::new(stdout);
+        for line in reader.lines() {
+            if let Ok(l) = line {
+                push_output(output, l);
+            }
+        }
+    }
+
+    let _ = stderr_handle.join();
+    match child.wait() {
+        Ok(status) => status.success(),
+        Err(_) => false,
+    }
+}
+
 /// Spawn install_global in a background thread.
 pub fn spawn_install_global(crate_name: &str, output: Arc<Mutex<Vec<String>>>, done: Arc<AtomicBool>) {
     let crate_name = crate_name.to_string();
     thread::spawn(move || {
-        push_output(&output, format!("$ cargo install {}", crate_name));
-        match Command::new("cargo").args(["install", &crate_name]).output() {
-            Ok(result) => {
-                for line in String::from_utf8_lossy(&result.stdout).lines() {
-                    push_output(&output, line.to_string());
-                }
-                for line in String::from_utf8_lossy(&result.stderr).lines() {
-                    push_output(&output, line.to_string());
-                }
-                if result.status.success() {
-                    push_output(&output, format!("✓ Successfully installed {}", crate_name));
-                } else {
-                    push_output(&output, format!("✗ Failed to install {}", crate_name));
-                }
-            }
-            Err(e) => {
-                push_output(&output, format!("Error: {}", e));
-            }
+        let ok = run_streaming("cargo", &["install", &crate_name], &output);
+        if ok {
+            push_output(&output, format!("✓ Successfully installed {}", crate_name));
+        } else {
+            push_output(&output, format!("✗ Failed to install {}", crate_name));
         }
         done.store(true, Ordering::Relaxed);
     });
@@ -410,29 +448,20 @@ pub fn spawn_install_local(
         let target_dir = format!("downloads/{}/{}", subdir, app_key);
         let _ = std::fs::create_dir_all(format!("downloads/{}", subdir));
 
-        push_output(&output, format!("$ git clone {} {}", repo_url, target_dir));
-
         if std::path::Path::new(&target_dir).exists() {
             push_output(&output, format!("Directory {} already exists, pulling...", target_dir));
-            match Command::new("git").args(["-C", &target_dir, "pull"]).output() {
-                Ok(r) => {
-                    for line in String::from_utf8_lossy(&r.stdout).lines() { push_output(&output, line.to_string()); }
-                    for line in String::from_utf8_lossy(&r.stderr).lines() { push_output(&output, line.to_string()); }
-                }
-                Err(e) => { push_output(&output, format!("Git pull error: {}", e)); done.store(true, Ordering::Relaxed); return; }
+            let ok = run_streaming("git", &["-C", &target_dir, "pull"], &output);
+            if !ok {
+                push_output(&output, "Git pull failed.".into());
+                done.store(true, Ordering::Relaxed);
+                return;
             }
         } else {
-            match Command::new("git").args(["clone", &repo_url, &target_dir]).output() {
-                Ok(r) => {
-                    for line in String::from_utf8_lossy(&r.stdout).lines() { push_output(&output, line.to_string()); }
-                    for line in String::from_utf8_lossy(&r.stderr).lines() { push_output(&output, line.to_string()); }
-                    if !r.status.success() {
-                        push_output(&output, "Git clone failed.".into());
-                        done.store(true, Ordering::Relaxed);
-                        return;
-                    }
-                }
-                Err(e) => { push_output(&output, format!("Error: {}", e)); done.store(true, Ordering::Relaxed); return; }
+            let ok = run_streaming("git", &["clone", &repo_url, &target_dir], &output);
+            if !ok {
+                push_output(&output, "Git clone failed.".into());
+                done.store(true, Ordering::Relaxed);
+                return;
             }
         }
 
@@ -448,20 +477,13 @@ pub fn spawn_install_local(
             push_output(&output, "Removed .github directory".into());
         }
 
-        // Build
+        // Build with live streaming
         let manifest = format!("{}/Cargo.toml", target_dir);
-        push_output(&output, format!("$ cargo build --release --manifest-path {}", manifest));
-        match Command::new("cargo").args(["build", "--release", "--manifest-path", &manifest]).output() {
-            Ok(r) => {
-                for line in String::from_utf8_lossy(&r.stdout).lines() { push_output(&output, line.to_string()); }
-                for line in String::from_utf8_lossy(&r.stderr).lines() { push_output(&output, line.to_string()); }
-                if r.status.success() {
-                    push_output(&output, format!("✓ Successfully built {}", app_key));
-                } else {
-                    push_output(&output, format!("✗ Build failed for {}", app_key));
-                }
-            }
-            Err(e) => { push_output(&output, format!("Error: {}", e)); }
+        let ok = run_streaming("cargo", &["build", "--release", "--manifest-path", &manifest], &output);
+        if ok {
+            push_output(&output, format!("✓ Successfully built {}", app_key));
+        } else {
+            push_output(&output, format!("✗ Build failed for {}", app_key));
         }
         done.store(true, Ordering::Relaxed);
     });
@@ -472,18 +494,11 @@ pub fn spawn_install_local(
 pub fn spawn_uninstall_global(crate_name: &str, output: Arc<Mutex<Vec<String>>>, done: Arc<AtomicBool>) {
     let crate_name = crate_name.to_string();
     thread::spawn(move || {
-        push_output(&output, format!("$ cargo uninstall {}", crate_name));
-        match Command::new("cargo").args(["uninstall", &crate_name]).output() {
-            Ok(r) => {
-                for line in String::from_utf8_lossy(&r.stdout).lines() { push_output(&output, line.to_string()); }
-                for line in String::from_utf8_lossy(&r.stderr).lines() { push_output(&output, line.to_string()); }
-                if r.status.success() {
-                    push_output(&output, format!("✓ Successfully uninstalled {}", crate_name));
-                } else {
-                    push_output(&output, format!("✗ Failed to uninstall {}", crate_name));
-                }
-            }
-            Err(e) => { push_output(&output, format!("Error: {}", e)); }
+        let ok = run_streaming("cargo", &["uninstall", &crate_name], &output);
+        if ok {
+            push_output(&output, format!("✓ Successfully uninstalled {}", crate_name));
+        } else {
+            push_output(&output, format!("✗ Failed to uninstall {}", crate_name));
         }
         done.store(true, Ordering::Relaxed);
     });

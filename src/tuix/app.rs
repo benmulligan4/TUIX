@@ -1331,10 +1331,12 @@ fn handle_appstore_key(
             Action::Enter => {
                 ss.sort_mode = SortMode::ALL[ss.sort_dropdown_cursor];
                 ss.sort_dropdown_open = false;
+                ss.focus = AppStoreFocus::LeftPane;
                 ss.recompute_app_list(registered_apps);
             }
             Action::Back => {
                 ss.sort_dropdown_open = false;
+                ss.focus = AppStoreFocus::LeftPane;
             }
             _ => {}
         }
@@ -1367,6 +1369,7 @@ fn handle_appstore_key(
             }
             Action::Back => {
                 ss.filter_dropdown_open = false;
+                ss.focus = AppStoreFocus::LeftPane;
             }
             _ => {}
         }
@@ -1429,7 +1432,12 @@ fn handle_appstore_key(
                     .and_then(|k| ss.install_statuses.get(k))
                     .cloned()
                     .unwrap_or(InstallStatus::NotInstalled);
-                let count = app_store::page::action_count(&status);
+                let is_pre = ss.selected_app_key()
+                    .and_then(|k| registered_apps.get(k))
+                    .and_then(|m| m.get("pre_installed"))
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let count = app_store::page::action_count(&status, is_pre);
                 match action {
                     Action::Up => {
                         if ss.right_action_cursor > 0 {
@@ -1494,6 +1502,7 @@ fn handle_appstore_action(
         None => return,
     };
     let status = ss.install_statuses.get(&key).cloned().unwrap_or(InstallStatus::NotInstalled);
+    let is_pre_installed = meta.get("pre_installed").and_then(|v| v.as_bool()).unwrap_or(false);
 
     match &status {
         InstallStatus::NotInstalled => {
@@ -1553,8 +1562,18 @@ fn handle_appstore_action(
                     if !repo.is_empty() { app_store::actions::open_url(repo); }
                 }
                 1 => {
-                    ss.confirm_dialog = Some(ConfirmAction::UninstallGlobal(key.clone()));
-                    ss.confirm_cursor = 1; // Default to "No"
+                    if is_pre_installed {
+                        // Install to Downloads (local only)
+                        let repo = meta.get("repository").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                        let category = meta.get("category").and_then(|v| v.as_str()).unwrap_or("Other").to_string();
+                        ss.start_operation(key.clone(), true, Some(InstallLocation::Local));
+                        let output = ss.thread_output.clone();
+                        let done = ss.thread_done.clone();
+                        app_store::actions::spawn_install_local(&key, &repo, &category, output, done);
+                    } else {
+                        ss.confirm_dialog = Some(ConfirmAction::UninstallGlobal(key.clone()));
+                        ss.confirm_cursor = 1;
+                    }
                 }
                 2 => {
                     let dir = app_store::actions::install_dir_from_path(path);
@@ -1581,28 +1600,51 @@ fn handle_appstore_action(
             }
         }
         InstallStatus::Both(g_path, l_path) => {
-            match ss.right_action_cursor {
-                0 => {
-                    let repo = meta.get("repository").and_then(|v| v.as_str()).unwrap_or("");
-                    if !repo.is_empty() { app_store::actions::open_url(repo); }
+            if is_pre_installed {
+                // Pre-installed: no PATH uninstall. Buttons: Open Repo, Uninstall Downloads, Open PATH, Open Downloads
+                match ss.right_action_cursor {
+                    0 => {
+                        let repo = meta.get("repository").and_then(|v| v.as_str()).unwrap_or("");
+                        if !repo.is_empty() { app_store::actions::open_url(repo); }
+                    }
+                    1 => {
+                        ss.confirm_dialog = Some(ConfirmAction::UninstallLocal(key.clone()));
+                        ss.confirm_cursor = 1;
+                    }
+                    2 => {
+                        let dir = app_store::actions::install_dir_from_path(g_path);
+                        app_store::actions::open_in_os_explorer(&dir);
+                    }
+                    3 => {
+                        let dir = app_store::actions::install_dir_from_path(l_path);
+                        app_store::actions::open_in_os_explorer(&dir);
+                    }
+                    _ => {}
                 }
-                1 => {
-                    ss.confirm_dialog = Some(ConfirmAction::UninstallGlobal(key.clone()));
-                    ss.confirm_cursor = 1;
+            } else {
+                match ss.right_action_cursor {
+                    0 => {
+                        let repo = meta.get("repository").and_then(|v| v.as_str()).unwrap_or("");
+                        if !repo.is_empty() { app_store::actions::open_url(repo); }
+                    }
+                    1 => {
+                        ss.confirm_dialog = Some(ConfirmAction::UninstallGlobal(key.clone()));
+                        ss.confirm_cursor = 1;
+                    }
+                    2 => {
+                        ss.confirm_dialog = Some(ConfirmAction::UninstallLocal(key.clone()));
+                        ss.confirm_cursor = 1;
+                    }
+                    3 => {
+                        let dir = app_store::actions::install_dir_from_path(g_path);
+                        app_store::actions::open_in_os_explorer(&dir);
+                    }
+                    4 => {
+                        let dir = app_store::actions::install_dir_from_path(l_path);
+                        app_store::actions::open_in_os_explorer(&dir);
+                    }
+                    _ => {}
                 }
-                2 => {
-                    ss.confirm_dialog = Some(ConfirmAction::UninstallLocal(key.clone()));
-                    ss.confirm_cursor = 1;
-                }
-                3 => {
-                    let dir = app_store::actions::install_dir_from_path(g_path);
-                    app_store::actions::open_in_os_explorer(&dir);
-                }
-                4 => {
-                    let dir = app_store::actions::install_dir_from_path(l_path);
-                    app_store::actions::open_in_os_explorer(&dir);
-                }
-                _ => {}
             }
         }
     }

@@ -199,6 +199,12 @@ impl AppStoreState {
         self.right_scroll = 0;
         self.right_action_cursor = 0;
         self.in_right_actions = false;
+        if !self.operation_running {
+            self.terminal_visible = false;
+            self.terminal_output.clear();
+            self.terminal_focused = false;
+            self.terminal_scroll = 0;
+        }
     }
 
     /// Build filtered and sorted list from registered apps.
