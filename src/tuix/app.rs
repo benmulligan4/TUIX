@@ -878,8 +878,10 @@ fn execute_action(
                 let local_subdir = if category == "Dashboard" { "dashboards" } else { "applications" };
                 let local_bin = format!("downloads/{}/{}/target/release/{}", local_subdir, name, crate_name);
                 let launch_cmd = if preferred == "local" {
+                    logging::info(&format!("Running {} from Downloads source", name));
                     vec![local_bin]
                 } else {
+                    logging::info(&format!("Running {} from PATH source", name));
                     vec![crate_name.to_string()]
                 };
                 process_manager::launch(name, &launch_cmd);
@@ -1550,8 +1552,10 @@ fn handle_appstore_action(
             let local_subdir = if category == "Dashboard" { "dashboards" } else { "applications" };
             let local_bin = format!("downloads/{}/{}/target/release/{}", local_subdir, key, crate_name);
             let launch_cmd = if preferred == "local" {
+                logging::info(&format!("App Store: running {} from Downloads source", key));
                 vec![local_bin]
             } else {
+                logging::info(&format!("App Store: running {} from PATH source", key));
                 vec![crate_name.to_string()]
             };
             process_manager::launch(&key, &launch_cmd);
@@ -1815,6 +1819,13 @@ fn run_app() -> bool {
                                 if let Some(meta) = registered_apps.get(key) {
                                     app_store::actions::add_to_config(key, meta, &location);
                                 }
+                                // If installed to PATH, ensure source is set to global
+                                if matches!(location, crate::app_store::state::InstallLocation::Global) {
+                                    let current = app_store::actions::get_run_source(key);
+                                    if current == "local" {
+                                        app_store::actions::set_run_source(key, "global");
+                                    }
+                                }
                             }
                             let loc_label = match state.app_store.pending_install_location {
                                 Some(crate::app_store::state::InstallLocation::Global) => "PATH",
@@ -1828,6 +1839,21 @@ fn run_app() -> bool {
                         }
                     } else {
                         state.popup = Some((format!("Uninstalled {}", key), Instant::now()));
+                        // If uninstalled source was the active run source, switch to the remaining one
+                        let current_source = app_store::actions::get_run_source(key);
+                        let new_status_check = app_store::actions::get_install_status(
+                            key,
+                            registered_apps.get(key).unwrap_or(&serde_json::Value::Null),
+                        );
+                        match new_status_check {
+                            crate::app_store::state::InstallStatus::Global(_) if current_source == "local" => {
+                                app_store::actions::set_run_source(key, "global");
+                            }
+                            crate::app_store::state::InstallStatus::Local(_) if current_source == "global" => {
+                                app_store::actions::set_run_source(key, "local");
+                            }
+                            _ => {}
+                        }
                     }
                     state.app_store.install_statuses = app_store::actions::refresh_all_statuses(&registered_apps);
                     state.app_store.recompute_app_list(&registered_apps);
