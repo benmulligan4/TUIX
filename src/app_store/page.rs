@@ -442,7 +442,9 @@ fn render_terminal_panel(frame: &mut Frame, area: Rect, state: &AppStoreState) {
         Style::default().fg(Color::DarkGray)
     };
 
-    let title = if state.terminal_focused {
+    let title = if state.operation_running {
+        " Terminal Output  [UI Locked — operation in progress] "
+    } else if state.terminal_focused {
         " Terminal Output  [Shift+Tab to exit] "
     } else {
         " Terminal Output  [Shift+Tab to enter] "

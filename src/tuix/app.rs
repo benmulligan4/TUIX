@@ -1968,6 +1968,10 @@ fn run_app() -> bool {
 
         // If the configured toggle key is pressed, switch focus
         if is_toggle_key {
+            // Block focus switch while app store operation is running
+            if matches!(state.active_page.as_deref(), Some("appstore")) && state.app_store.operation_running {
+                continue;
+            }
             state.focus = match state.focus {
                 FocusTarget::Navbar => FocusTarget::Main,
                 FocusTarget::Main => FocusTarget::Navbar,
