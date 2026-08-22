@@ -1219,25 +1219,21 @@ fn handle_appstore_key(
 
     // Confirm dialog
     if ss.confirm_dialog.is_some() {
+        let is_choose = matches!(ss.confirm_dialog, Some(ConfirmAction::UninstallChoose(_)));
+        let max_cursor = if is_choose { 3 } else { 1 }; // choose: PATH/Downloads/Both/Cancel, normal: Yes/No
         match action {
-            Action::Left => { ss.confirm_cursor = 0; }
-            Action::Right => { ss.confirm_cursor = 1; }
+            Action::Left => { if ss.confirm_cursor > 0 { ss.confirm_cursor -= 1; } }
+            Action::Right => { if ss.confirm_cursor < max_cursor { ss.confirm_cursor += 1; } }
+            Action::Up => { if is_choose && ss.confirm_cursor > 0 { ss.confirm_cursor -= 1; } }
+            Action::Down => { if is_choose && ss.confirm_cursor < max_cursor { ss.confirm_cursor += 1; } }
             Action::Enter => {
-                if ss.confirm_cursor == 0 {
-                    // Yes — execute uninstall in background
-                    let confirm = ss.confirm_dialog.take().unwrap();
-
-                    match confirm {
-                        ConfirmAction::UninstallGlobal(ref key) => {
+                let confirm = ss.confirm_dialog.take().unwrap();
+                match confirm {
+                    ConfirmAction::UninstallGlobal(ref key) => {
+                        if ss.confirm_cursor == 0 {
                             let meta = registered_apps.get(key.as_str());
-                            let crate_name = meta
-                                .and_then(|m| m.get("crate_name").and_then(|v| v.as_str()))
-                                .unwrap_or(key)
-                                .to_string();
-                            let category = meta
-                                .and_then(|m| m.get("category").and_then(|v| v.as_str()))
-                                .unwrap_or("Other")
-                                .to_string();
+                            let crate_name = meta.and_then(|m| m.get("crate_name").and_then(|v| v.as_str())).unwrap_or(key).to_string();
+                            let category = meta.and_then(|m| m.get("category").and_then(|v| v.as_str())).unwrap_or("Other").to_string();
                             ss.start_operation(key.clone(), false, None);
                             let output = ss.thread_output.clone();
                             let done = ss.thread_done.clone();
@@ -1249,28 +1245,50 @@ fn handle_appstore_key(
                                 done.store(true, std::sync::atomic::Ordering::Relaxed);
                             });
                         }
-                        ConfirmAction::UninstallLocal(ref key) => {
+                    }
+                    ConfirmAction::UninstallLocal(ref key) => {
+                        if ss.confirm_cursor == 0 {
                             let meta = registered_apps.get(key.as_str());
-                            let category = meta
-                                .and_then(|m| m.get("category").and_then(|v| v.as_str()))
-                                .unwrap_or("Other")
-                                .to_string();
+                            let category = meta.and_then(|m| m.get("category").and_then(|v| v.as_str())).unwrap_or("Other").to_string();
                             ss.start_operation(key.clone(), false, None);
                             let output = ss.thread_output.clone();
                             let done = ss.thread_done.clone();
                             let key_clone = key.clone();
-                            let category_clone = category.clone();
+                            let cat = category.clone();
                             std::thread::spawn(move || {
-                                app_store::actions::uninstall_local(&key_clone, &category_clone, &mut Vec::new());
+                                app_store::actions::uninstall_local(&key_clone, &cat, &mut Vec::new());
                                 app_store::actions::push_output(&output, format!("✓ Uninstalled {} from Downloads", key_clone));
                                 app_store::actions::remove_from_config(&key_clone, &category);
                                 done.store(true, std::sync::atomic::Ordering::Relaxed);
                             });
                         }
-                        ConfirmAction::UninstallChoose(_) => {}
                     }
-                } else {
-                    ss.confirm_dialog = None;
+                    ConfirmAction::UninstallChoose(ref key) => {
+                        // 0=PATH, 1=Downloads, 2=Both, 3=Cancel
+                        if ss.confirm_cursor <= 2 {
+                            let meta = registered_apps.get(key.as_str());
+                            let crate_name = meta.and_then(|m| m.get("crate_name").and_then(|v| v.as_str())).unwrap_or(key).to_string();
+                            let category = meta.and_then(|m| m.get("category").and_then(|v| v.as_str())).unwrap_or("Other").to_string();
+                            ss.start_operation(key.clone(), false, None);
+                            let output = ss.thread_output.clone();
+                            let done = ss.thread_done.clone();
+                            let key_clone = key.clone();
+                            let choice = ss.confirm_cursor;
+                            let cat = category.clone();
+                            std::thread::spawn(move || {
+                                if choice == 0 || choice == 2 {
+                                    app_store::actions::uninstall_global(&crate_name, &mut Vec::new());
+                                    app_store::actions::push_output(&output, format!("✓ Uninstalled {} from PATH", key_clone));
+                                }
+                                if choice == 1 || choice == 2 {
+                                    app_store::actions::uninstall_local(&key_clone, &cat, &mut Vec::new());
+                                    app_store::actions::push_output(&output, format!("✓ Uninstalled {} from Downloads", key_clone));
+                                }
+                                app_store::actions::remove_from_config(&key_clone, &category);
+                                done.store(true, std::sync::atomic::Ordering::Relaxed);
+                            });
+                        }
+                    }
                 }
                 ss.confirm_cursor = 0;
             }
@@ -1445,12 +1463,7 @@ fn handle_appstore_key(
                     .and_then(|k| ss.install_statuses.get(k))
                     .cloned()
                     .unwrap_or(InstallStatus::NotInstalled);
-                let is_pre = ss.selected_app_key()
-                    .and_then(|k| registered_apps.get(k))
-                    .and_then(|m| m.get("pre_installed"))
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
-                let count = app_store::page::action_count(&status, is_pre);
+                let count = app_store::page::action_count(&status);
                 match action {
                     Action::Up => {
                         if ss.right_action_cursor > 0 {
@@ -1515,12 +1528,10 @@ fn handle_appstore_action(
         None => return,
     };
     let status = ss.install_statuses.get(&key).cloned().unwrap_or(InstallStatus::NotInstalled);
-    let is_pre_installed = meta.get("pre_installed").and_then(|v| v.as_bool()).unwrap_or(false);
     let is_installed = !matches!(status, InstallStatus::NotInstalled);
 
     // For installed apps, index 0 = Run, then the rest shift by 1
     if is_installed && ss.right_action_cursor == 0 {
-        // Run the app — if both locations, show run source dialog
         let crate_name = meta.get("crate_name").and_then(|v| v.as_str()).unwrap_or(&key);
         let category = meta.get("category").and_then(|v| v.as_str()).unwrap_or("Other");
         let has_global = app_store::actions::detect_global_install(crate_name).is_some();
@@ -1553,14 +1564,10 @@ fn handle_appstore_action(
         InstallStatus::NotInstalled => {
             match cursor {
                 0 => {
-                    // Open Repository
                     let repo = meta.get("repository").and_then(|v| v.as_str()).unwrap_or("");
-                    if !repo.is_empty() {
-                        app_store::actions::open_url(repo);
-                    }
+                    if !repo.is_empty() { app_store::actions::open_url(repo); }
                 }
                 1 => {
-                    // Install — show location dialog
                     let methods: Vec<InstallLocation> = meta
                         .get("install_methods")
                         .and_then(|v| v.as_array())
@@ -1579,7 +1586,6 @@ fn handle_appstore_action(
                         ss.start_operation(key.clone(), true, Some(methods[0]));
                         let output = ss.thread_output.clone();
                         let done = ss.thread_done.clone();
-
                         match methods[0] {
                             InstallLocation::Global => {
                                 let crate_name = meta.get("crate_name").and_then(|v| v.as_str()).unwrap_or(&key).to_string();
@@ -1601,26 +1607,26 @@ fn handle_appstore_action(
             }
         }
         InstallStatus::Global(path) => {
+            // Buttons: Open Repo(0), Uninstall(1), Install to Downloads(2), Open Location(3)
             match cursor {
                 0 => {
                     let repo = meta.get("repository").and_then(|v| v.as_str()).unwrap_or("");
                     if !repo.is_empty() { app_store::actions::open_url(repo); }
                 }
                 1 => {
-                    if is_pre_installed {
-                        // Install to Downloads (local only)
-                        let repo = meta.get("repository").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                        let category = meta.get("category").and_then(|v| v.as_str()).unwrap_or("Other").to_string();
-                        ss.start_operation(key.clone(), true, Some(InstallLocation::Local));
-                        let output = ss.thread_output.clone();
-                        let done = ss.thread_done.clone();
-                        app_store::actions::spawn_install_local(&key, &repo, &category, output, done);
-                    } else {
-                        ss.confirm_dialog = Some(ConfirmAction::UninstallGlobal(key.clone()));
-                        ss.confirm_cursor = 1;
-                    }
+                    ss.confirm_dialog = Some(ConfirmAction::UninstallGlobal(key.clone()));
+                    ss.confirm_cursor = 1;
                 }
                 2 => {
+                    // Install to Downloads
+                    let repo = meta.get("repository").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let category = meta.get("category").and_then(|v| v.as_str()).unwrap_or("Other").to_string();
+                    ss.start_operation(key.clone(), true, Some(InstallLocation::Local));
+                    let output = ss.thread_output.clone();
+                    let done = ss.thread_done.clone();
+                    app_store::actions::spawn_install_local(&key, &repo, &category, output, done);
+                }
+                3 => {
                     let dir = app_store::actions::install_dir_from_path(path);
                     app_store::actions::open_in_os_explorer(&dir);
                 }
@@ -1628,6 +1634,7 @@ fn handle_appstore_action(
             }
         }
         InstallStatus::Local(path) => {
+            // Buttons: Open Repo(0), Uninstall(1), Install to PATH(2), Open Location(3)
             match cursor {
                 0 => {
                     let repo = meta.get("repository").and_then(|v| v.as_str()).unwrap_or("");
@@ -1638,6 +1645,14 @@ fn handle_appstore_action(
                     ss.confirm_cursor = 1;
                 }
                 2 => {
+                    // Install to PATH
+                    let crate_name = meta.get("crate_name").and_then(|v| v.as_str()).unwrap_or(&key).to_string();
+                    ss.start_operation(key.clone(), true, Some(InstallLocation::Global));
+                    let output = ss.thread_output.clone();
+                    let done = ss.thread_done.clone();
+                    app_store::actions::spawn_install_global(&crate_name, output, done);
+                }
+                3 => {
                     let dir = app_store::actions::install_dir_from_path(path);
                     app_store::actions::open_in_os_explorer(&dir);
                 }
@@ -1645,51 +1660,26 @@ fn handle_appstore_action(
             }
         }
         InstallStatus::Both(g_path, l_path) => {
-            if is_pre_installed {
-                // Pre-installed: no PATH uninstall. Buttons: Open Repo, Uninstall Downloads, Open PATH, Open Downloads
-                match cursor {
-                    0 => {
-                        let repo = meta.get("repository").and_then(|v| v.as_str()).unwrap_or("");
-                        if !repo.is_empty() { app_store::actions::open_url(repo); }
-                    }
-                    1 => {
-                        ss.confirm_dialog = Some(ConfirmAction::UninstallLocal(key.clone()));
-                        ss.confirm_cursor = 1;
-                    }
-                    2 => {
-                        let dir = app_store::actions::install_dir_from_path(g_path);
-                        app_store::actions::open_in_os_explorer(&dir);
-                    }
-                    3 => {
-                        let dir = app_store::actions::install_dir_from_path(l_path);
-                        app_store::actions::open_in_os_explorer(&dir);
-                    }
-                    _ => {}
+            // Buttons: Open Repo(0), Uninstall(1-chooser), Open PATH(2), Open Downloads(3)
+            match cursor {
+                0 => {
+                    let repo = meta.get("repository").and_then(|v| v.as_str()).unwrap_or("");
+                    if !repo.is_empty() { app_store::actions::open_url(repo); }
                 }
-            } else {
-                match cursor {
-                    0 => {
-                        let repo = meta.get("repository").and_then(|v| v.as_str()).unwrap_or("");
-                        if !repo.is_empty() { app_store::actions::open_url(repo); }
-                    }
-                    1 => {
-                        ss.confirm_dialog = Some(ConfirmAction::UninstallGlobal(key.clone()));
-                        ss.confirm_cursor = 1;
-                    }
-                    2 => {
-                        ss.confirm_dialog = Some(ConfirmAction::UninstallLocal(key.clone()));
-                        ss.confirm_cursor = 1;
-                    }
-                    3 => {
-                        let dir = app_store::actions::install_dir_from_path(g_path);
-                        app_store::actions::open_in_os_explorer(&dir);
-                    }
-                    4 => {
-                        let dir = app_store::actions::install_dir_from_path(l_path);
-                        app_store::actions::open_in_os_explorer(&dir);
-                    }
-                    _ => {}
+                1 => {
+                    // Show uninstall chooser (reuse confirm dialog with UninstallChoose)
+                    ss.confirm_dialog = Some(ConfirmAction::UninstallChoose(key.clone()));
+                    ss.confirm_cursor = 0;
                 }
+                2 => {
+                    let dir = app_store::actions::install_dir_from_path(g_path);
+                    app_store::actions::open_in_os_explorer(&dir);
+                }
+                3 => {
+                    let dir = app_store::actions::install_dir_from_path(l_path);
+                    app_store::actions::open_in_os_explorer(&dir);
+                }
+                _ => {}
             }
         }
     }
@@ -1732,8 +1722,8 @@ fn run_app() -> bool {
     logging::info("TUIX started");
 
     let settings_map = registry::load_settings();
-    let dashboards = registry::load_dashboards();
-    let apps_registry = registry::load_apps();
+    let mut dashboards = registry::load_dashboards();
+    let mut apps_registry = registry::load_apps();
     let registered_apps = registry::load_registered_apps();
 
     let default_dashboard = settings_map
@@ -1748,7 +1738,7 @@ fn run_app() -> bool {
     state.app_store.install_statuses = app_store::actions::refresh_all_statuses(&registered_apps);
     state.app_store.recompute_app_list(&registered_apps);
 
-    let nav_items = build_nav_items(&dashboards, &apps_registry);
+    let mut nav_items = build_nav_items(&dashboards, &apps_registry);
     let mut active_internal_app: Option<InternalApp> = None;
     let mut active_installed_dash: Option<InstalledDashboard> = None;
 
@@ -1811,6 +1801,11 @@ fn run_app() -> bool {
                     }
                     state.app_store.install_statuses = app_store::actions::refresh_all_statuses(&registered_apps);
                     state.app_store.recompute_app_list(&registered_apps);
+
+                    // Refresh nav dropdowns so new apps appear immediately
+                    dashboards = registry::load_dashboards();
+                    apps_registry = registry::load_apps();
+                    nav_items = build_nav_items(&dashboards, &apps_registry);
                 }
                 state.app_store.pending_op_key = None;
                 state.app_store.pending_install_location = None;
@@ -2046,7 +2041,7 @@ fn run_app() -> bool {
             continue;
         }
 
-        // When App Store terminal is focused, scroll it
+        // When App Store terminal is focused, scroll it or close it
         if state.app_store.terminal_focused
             && state.focus == FocusTarget::Main
             && matches!(state.active_page.as_deref(), Some("appstore"))
@@ -2063,8 +2058,31 @@ fn run_app() -> bool {
                         state.app_store.terminal_scroll += 1;
                     }
                 }
+                crossterm::event::KeyCode::Char('q') | crossterm::event::KeyCode::Char('Q') => {
+                    if !state.app_store.operation_running {
+                        state.app_store.terminal_visible = false;
+                        state.app_store.terminal_focused = false;
+                        state.app_store.terminal_output.clear();
+                        state.app_store.terminal_scroll = 0;
+                    }
+                }
                 _ => {}
             }
+            continue;
+        }
+
+        // Allow Q to close terminal even when not focused (from right pane)
+        if state.focus == FocusTarget::Main
+            && matches!(state.active_page.as_deref(), Some("appstore"))
+            && state.app_store.terminal_visible
+            && !state.app_store.operation_running
+            && matches!(key_event.code, crossterm::event::KeyCode::Char('q') | crossterm::event::KeyCode::Char('Q'))
+            && state.app_store.focus == crate::app_store::state::AppStoreFocus::RightPane
+        {
+            state.app_store.terminal_visible = false;
+            state.app_store.terminal_focused = false;
+            state.app_store.terminal_output.clear();
+            state.app_store.terminal_scroll = 0;
             continue;
         }
 

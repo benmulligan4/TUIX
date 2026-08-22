@@ -229,7 +229,6 @@ fn render_right_pane(
     let license = meta.get("license").and_then(|v| v.as_str()).unwrap_or("—");
     let description = meta.get("description").and_then(|v| v.as_str()).unwrap_or("");
     let repository = meta.get("repository").and_then(|v| v.as_str()).unwrap_or("");
-    let is_pre_installed = meta.get("pre_installed").and_then(|v| v.as_bool()).unwrap_or(false);
 
     let install_status = state
         .install_statuses
@@ -337,7 +336,7 @@ fn render_right_pane(
     lines.push(Line::from(Span::styled("  [ Open Repository ]", repo_style)));
     action_idx += 1;
 
-    // Install / Uninstall buttons based on status and pre_installed flag
+    // Install / Uninstall buttons based on status
     match &install_status {
         InstallStatus::NotInstalled => {
             let install_style = if in_actions && state.right_action_cursor == action_idx {
@@ -348,25 +347,20 @@ fn render_right_pane(
             lines.push(Line::from(Span::styled("  [ Install ]", install_style)));
         }
         InstallStatus::Global(_) => {
-            if is_pre_installed {
-                lines.push(Line::from(Span::styled(
-                    "  (Pre-installed — cannot uninstall from PATH)",
-                    Style::default().fg(Color::DarkGray),
-                )));
-                let install_local_style = if in_actions && state.right_action_cursor == action_idx {
-                    Style::default().fg(Color::Black).bg(Color::Cyan)
-                } else {
-                    Style::default().fg(Color::Green)
-                };
-                lines.push(Line::from(Span::styled("  [ Install to Downloads ]", install_local_style)));
+            let uninstall_style = if in_actions && state.right_action_cursor == action_idx {
+                Style::default().fg(Color::Black).bg(Color::Cyan)
             } else {
-                let uninstall_style = if in_actions && state.right_action_cursor == action_idx {
-                    Style::default().fg(Color::Black).bg(Color::Cyan)
-                } else {
-                    Style::default().fg(Color::Red)
-                };
-                lines.push(Line::from(Span::styled("  [ Uninstall from PATH ]", uninstall_style)));
-            }
+                Style::default().fg(Color::Red)
+            };
+            lines.push(Line::from(Span::styled("  [ Uninstall from PATH ]", uninstall_style)));
+            action_idx += 1;
+
+            let install_local_style = if in_actions && state.right_action_cursor == action_idx {
+                Style::default().fg(Color::Black).bg(Color::Cyan)
+            } else {
+                Style::default().fg(Color::Green)
+            };
+            lines.push(Line::from(Span::styled("  [ Install to Downloads ]", install_local_style)));
             action_idx += 1;
 
             let open_style = if in_actions && state.right_action_cursor == action_idx {
@@ -385,6 +379,14 @@ fn render_right_pane(
             lines.push(Line::from(Span::styled("  [ Uninstall from Downloads ]", uninstall_style)));
             action_idx += 1;
 
+            let install_path_style = if in_actions && state.right_action_cursor == action_idx {
+                Style::default().fg(Color::Black).bg(Color::Cyan)
+            } else {
+                Style::default().fg(Color::Green)
+            };
+            lines.push(Line::from(Span::styled("  [ Install to PATH ]", install_path_style)));
+            action_idx += 1;
+
             let open_style = if in_actions && state.right_action_cursor == action_idx {
                 Style::default().fg(Color::Black).bg(Color::Cyan)
             } else {
@@ -393,27 +395,12 @@ fn render_right_pane(
             lines.push(Line::from(Span::styled("  [ Open Install Location ]", open_style)));
         }
         InstallStatus::Both(_, _) => {
-            if !is_pre_installed {
-                let uninstall_path_style = if in_actions && state.right_action_cursor == action_idx {
-                    Style::default().fg(Color::Black).bg(Color::Cyan)
-                } else {
-                    Style::default().fg(Color::Red)
-                };
-                lines.push(Line::from(Span::styled("  [ Uninstall from PATH ]", uninstall_path_style)));
-                action_idx += 1;
-            } else {
-                lines.push(Line::from(Span::styled(
-                    "  (Pre-installed — cannot uninstall from PATH)",
-                    Style::default().fg(Color::DarkGray),
-                )));
-            }
-
-            let uninstall_local_style = if in_actions && state.right_action_cursor == action_idx {
+            let uninstall_style = if in_actions && state.right_action_cursor == action_idx {
                 Style::default().fg(Color::Black).bg(Color::Cyan)
             } else {
                 Style::default().fg(Color::Red)
             };
-            lines.push(Line::from(Span::styled("  [ Uninstall from Downloads ]", uninstall_local_style)));
+            lines.push(Line::from(Span::styled("  [ Uninstall ]", uninstall_style)));
             action_idx += 1;
 
             let open_path_style = if in_actions && state.right_action_cursor == action_idx {
@@ -457,7 +444,9 @@ fn render_terminal_panel(frame: &mut Frame, area: Rect, state: &AppStoreState) {
     let title = if state.operation_running {
         " Terminal Output  [UI Locked — operation in progress] "
     } else if state.terminal_focused {
-        " Terminal Output  [Shift+Tab to exit] "
+        " Terminal Output  [Shift+Tab to exit] [Q to close] "
+    } else if !state.terminal_output.is_empty() {
+        " Terminal Output  [Shift+Tab to enter] [Q to close] "
     } else {
         " Terminal Output  [Shift+Tab to enter] "
     };
@@ -517,59 +506,88 @@ fn render_confirm_dialog(frame: &mut Frame, area: Rect, state: &AppStoreState) {
         None => return,
     };
 
+    let is_choose = matches!(confirm, ConfirmAction::UninstallChoose(_));
     let app_name = match confirm {
         ConfirmAction::UninstallGlobal(n)
         | ConfirmAction::UninstallLocal(n)
         | ConfirmAction::UninstallChoose(n) => n.as_str(),
     };
 
-    let msg = format!("Are you sure you want to uninstall {}?", app_name);
-    let width = (msg.len() + 6).min(area.width as usize) as u16;
-    let height = 5;
-
-    let popup_rect = Rect {
-        x: area.x + (area.width.saturating_sub(width)) / 2,
-        y: area.y + (area.height.saturating_sub(height)) / 2,
-        width,
-        height,
-    };
-
-    frame.render_widget(Clear, popup_rect);
-
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(" Confirm Uninstall ")
-        .style(Style::default().fg(Color::Red).bg(Color::Black));
-    frame.render_widget(block, popup_rect);
-
-    let inner = popup_rect.inner(Margin { horizontal: 1, vertical: 1 });
-
-    let yes_style = if state.confirm_cursor == 0 {
-        Style::default().fg(Color::Black).bg(Color::Red)
+    if is_choose {
+        let msg = format!("Uninstall {} from:", app_name);
+        let width = (msg.len() + 10).max(40).min(area.width as usize) as u16;
+        let height = 8;
+        let popup_rect = Rect {
+            x: area.x + (area.width.saturating_sub(width)) / 2,
+            y: area.y + (area.height.saturating_sub(height)) / 2,
+            width,
+            height,
+        };
+        frame.render_widget(Clear, popup_rect);
+        frame.render_widget(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Uninstall ")
+                .style(Style::default().fg(Color::Red).bg(Color::Black)),
+            popup_rect,
+        );
+        let inner = popup_rect.inner(Margin { horizontal: 1, vertical: 1 });
+        let options = ["PATH only", "Downloads only", "Both", "Cancel"];
+        let mut lines = vec![
+            Line::from(Span::styled(format!("  {}", msg), Style::default().fg(Color::White))),
+            Line::from(""),
+        ];
+        for (i, opt) in options.iter().enumerate() {
+            let style = if i == state.confirm_cursor {
+                Style::default().fg(Color::Black).bg(Color::Cyan)
+            } else {
+                Style::default().fg(Color::White)
+            };
+            let prefix = if i == state.confirm_cursor { "  » " } else { "    " };
+            lines.push(Line::from(Span::styled(format!("{}{}", prefix, opt), style)));
+        }
+        frame.render_widget(Paragraph::new(lines), inner);
     } else {
-        Style::default().fg(Color::Red)
-    };
-    let no_style = if state.confirm_cursor == 1 {
-        Style::default().fg(Color::Black).bg(Color::Green)
-    } else {
-        Style::default().fg(Color::Green)
-    };
-
-    let lines = vec![
-        Line::from(Span::styled(
-            format!("  {}", msg),
-            Style::default().fg(Color::White),
-        )),
-        Line::from(""),
-        Line::from(vec![
-            Span::styled("     ", Style::default()),
-            Span::styled(" Yes ", yes_style),
-            Span::styled("    ", Style::default()),
-            Span::styled(" No ", no_style),
-        ]),
-    ];
-
-    frame.render_widget(Paragraph::new(lines), inner);
+        let msg = format!("Are you sure you want to uninstall {}?", app_name);
+        let width = (msg.len() + 6).min(area.width as usize) as u16;
+        let height = 5;
+        let popup_rect = Rect {
+            x: area.x + (area.width.saturating_sub(width)) / 2,
+            y: area.y + (area.height.saturating_sub(height)) / 2,
+            width,
+            height,
+        };
+        frame.render_widget(Clear, popup_rect);
+        frame.render_widget(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Confirm Uninstall ")
+                .style(Style::default().fg(Color::Red).bg(Color::Black)),
+            popup_rect,
+        );
+        let inner = popup_rect.inner(Margin { horizontal: 1, vertical: 1 });
+        let yes_style = if state.confirm_cursor == 0 {
+            Style::default().fg(Color::Black).bg(Color::Red)
+        } else {
+            Style::default().fg(Color::Red)
+        };
+        let no_style = if state.confirm_cursor == 1 {
+            Style::default().fg(Color::Black).bg(Color::Green)
+        } else {
+            Style::default().fg(Color::Green)
+        };
+        let lines = vec![
+            Line::from(Span::styled(format!("  {}", msg), Style::default().fg(Color::White))),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("     ", Style::default()),
+                Span::styled(" Yes ", yes_style),
+                Span::styled("    ", Style::default()),
+                Span::styled(" No ", no_style),
+            ]),
+        ];
+        frame.render_widget(Paragraph::new(lines), inner);
+    }
 }
 
 fn render_install_location_dialog(frame: &mut Frame, area: Rect, state: &AppStoreState) {
@@ -725,17 +743,13 @@ fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
 }
 
 /// Get the number of action buttons for the current app's install status.
-pub fn action_count(status: &InstallStatus, is_pre_installed: bool) -> usize {
+pub fn action_count(status: &InstallStatus) -> usize {
     let run_btn = if matches!(status, InstallStatus::NotInstalled) { 0 } else { 1 };
     let base = match status {
-        InstallStatus::NotInstalled => 2,    // Open Repo, Install
-        InstallStatus::Global(_) => {
-            if is_pre_installed { 3 } else { 3 }  // Open Repo, (Un)install/Install-local, Open Location
-        }
-        InstallStatus::Local(_) => 3,        // Open Repo, Uninstall, Open Location
-        InstallStatus::Both(_, _) => {
-            if is_pre_installed { 4 } else { 5 }
-        }
+        InstallStatus::NotInstalled => 2,  // Open Repo, Install
+        InstallStatus::Global(_) => 4,     // Open Repo, Uninstall, Install to Downloads, Open Location
+        InstallStatus::Local(_) => 4,      // Open Repo, Uninstall, Install to PATH, Open Location
+        InstallStatus::Both(_, _) => 4,    // Open Repo, Uninstall (chooser), Open PATH, Open Downloads
     };
     run_btn + base
 }
