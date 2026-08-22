@@ -403,6 +403,24 @@ fn render_right_pane(
             lines.push(Line::from(Span::styled("  [ Uninstall ]", uninstall_style)));
             action_idx += 1;
 
+            // Run source selector
+            let current_source = super::actions::get_run_source(&selected_key);
+            let source_label = if current_source == "local" { "Downloads" } else { "PATH" };
+            let source_style = if in_actions && state.right_action_cursor == action_idx {
+                Style::default().fg(Color::Black).bg(Color::Cyan)
+            } else {
+                Style::default().fg(Color::Yellow)
+            };
+            let source_text = format!("  [ Default Source: {} — press to switch ]", source_label);
+            lines.push(Line::from(Span::styled(source_text, source_style)));
+            if current_source == "local" {
+                lines.push(Line::from(Span::styled(
+                    "    ⚠ Downloads source is experimental",
+                    Style::default().fg(Color::Yellow),
+                )));
+            }
+            action_idx += 1;
+
             let open_path_style = if in_actions && state.right_action_cursor == action_idx {
                 Style::default().fg(Color::Black).bg(Color::Cyan)
             } else {
@@ -749,7 +767,7 @@ pub fn action_count(status: &InstallStatus) -> usize {
         InstallStatus::NotInstalled => 2,  // Open Repo, Install
         InstallStatus::Global(_) => 4,     // Open Repo, Uninstall, Install to Downloads, Open Location
         InstallStatus::Local(_) => 4,      // Open Repo, Uninstall, Install to PATH, Open Location
-        InstallStatus::Both(_, _) => 4,    // Open Repo, Uninstall (chooser), Open PATH, Open Downloads
+        InstallStatus::Both(_, _) => 5,    // Open Repo, Uninstall, Set Source, Open PATH, Open Downloads
     };
     run_btn + base
 }

@@ -359,6 +359,22 @@ pub fn install_dir_from_path(path: &str) -> String {
         .unwrap_or_else(|| path.to_string())
 }
 
+/// Get the preferred run source for an app ("global" or "local"). Defaults to "global".
+pub fn get_run_source(app_key: &str) -> String {
+    let settings = crate::settings::persistence::load();
+    let path = format!("app_store.run_sources.{}", app_key);
+    crate::settings::persistence::get_str(&settings, &path, "global")
+}
+
+/// Set the preferred run source for an app.
+pub fn set_run_source(app_key: &str, source: &str) {
+    let mut settings = crate::settings::persistence::load();
+    let path = format!("app_store.run_sources.{}", app_key);
+    crate::settings::persistence::set(&mut settings, &path, serde_json::Value::String(source.to_string()));
+    crate::settings::persistence::save(&settings);
+    logging::info(&format!("App Store: set run source for {} to {}", app_key, source));
+}
+
 // --- Thread-spawning variants for non-blocking UI ---
 
 pub fn push_output(buf: &Arc<Mutex<Vec<String>>>, line: String) {

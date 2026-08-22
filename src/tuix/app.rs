@@ -873,12 +873,18 @@ fn execute_action(
             let has_local = app_store::actions::detect_local_install(name, category).is_some();
 
             if has_global && has_local {
-                // Build both command options
-                let global_cmd = vec![crate_name.to_string()];
+                // Use saved run source preference (default: global/PATH)
+                let preferred = app_store::actions::get_run_source(name);
                 let local_subdir = if category == "Dashboard" { "dashboards" } else { "applications" };
                 let local_bin = format!("downloads/{}/{}/target/release/{}", local_subdir, name, crate_name);
-                let local_cmd = vec![local_bin];
-                state.run_source_dialog = Some((name.to_string(), global_cmd, local_cmd, 0));
+                let launch_cmd = if preferred == "local" {
+                    vec![local_bin]
+                } else {
+                    vec![crate_name.to_string()]
+                };
+                process_manager::launch(name, &launch_cmd);
+                state.active_app = Some(name.to_string());
+                state.active_page = None;
                 state.focus = FocusTarget::Main;
                 state.nav_expanded = false;
             } else if !cmd.is_empty() {
@@ -1539,11 +1545,18 @@ fn handle_appstore_action(
         let has_local = app_store::actions::detect_local_install(&key, category).is_some();
 
         if has_global && has_local {
-            let global_cmd = vec![crate_name.to_string()];
+            // Use saved preference
+            let preferred = app_store::actions::get_run_source(&key);
             let local_subdir = if category == "Dashboard" { "dashboards" } else { "applications" };
             let local_bin = format!("downloads/{}/{}/target/release/{}", local_subdir, key, crate_name);
-            let local_cmd = vec![local_bin];
-            state.run_source_dialog = Some((key.clone(), global_cmd, local_cmd, 0));
+            let launch_cmd = if preferred == "local" {
+                vec![local_bin]
+            } else {
+                vec![crate_name.to_string()]
+            };
+            process_manager::launch(&key, &launch_cmd);
+            state.active_app = Some(key.clone());
+            state.active_page = None;
         } else {
             let cmd: Vec<String> = meta.get("cmd")
                 .and_then(|c| c.as_array())
@@ -1664,22 +1677,29 @@ fn handle_appstore_action(
             }
         }
         InstallStatus::Both(g_path, l_path) => {
-            // Buttons: Open Repo(0), Uninstall(1-chooser), Open PATH(2), Open Downloads(3)
+            // Buttons: Open Repo(0), Uninstall(1), Set Source(2), Open PATH(3), Open Downloads(4)
             match cursor {
                 0 => {
                     let repo = meta.get("repository").and_then(|v| v.as_str()).unwrap_or("");
                     if !repo.is_empty() { app_store::actions::open_url(repo); }
                 }
                 1 => {
-                    // Show uninstall chooser (reuse confirm dialog with UninstallChoose)
                     ss.confirm_dialog = Some(ConfirmAction::UninstallChoose(key.clone()));
                     ss.confirm_cursor = 0;
                 }
                 2 => {
+                    // Toggle run source between global and local
+                    let current = app_store::actions::get_run_source(&key);
+                    let new_source = if current == "global" { "local" } else { "global" };
+                    app_store::actions::set_run_source(&key, new_source);
+                    let label = if new_source == "local" { "Downloads (experimental)" } else { "PATH" };
+                    state.popup = Some((format!("Default source set to {}", label), Instant::now()));
+                }
+                3 => {
                     let dir = app_store::actions::install_dir_from_path(g_path);
                     app_store::actions::open_in_os_explorer(&dir);
                 }
-                3 => {
+                4 => {
                     let dir = app_store::actions::install_dir_from_path(l_path);
                     app_store::actions::open_in_os_explorer(&dir);
                 }
@@ -1811,6 +1831,18 @@ fn run_app() -> bool {
                     }
                     state.app_store.install_statuses = app_store::actions::refresh_all_statuses(&registered_apps);
                     state.app_store.recompute_app_list(&registered_apps);
+
+                    // Keep highlight visible — clamp action cursor to new count
+                    let new_status = state.app_store.selected_app_key()
+                        .and_then(|k| state.app_store.install_statuses.get(k))
+                        .cloned()
+                        .unwrap_or(crate::app_store::state::InstallStatus::NotInstalled);
+                    let new_count = app_store::page::action_count(&new_status);
+                    if state.app_store.right_action_cursor >= new_count {
+                        state.app_store.right_action_cursor = 0;
+                    }
+                    state.app_store.in_right_actions = true;
+                    state.app_store.focus = crate::app_store::state::AppStoreFocus::RightPane;
 
                     // Refresh nav dropdowns so new apps appear immediately
                     dashboards = registry::load_dashboards();
