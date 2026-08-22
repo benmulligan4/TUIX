@@ -67,6 +67,8 @@ pub struct TuixState {
     pub app_store: AppStoreState,
     /// Temporary popup message (text, when it was set).
     pub popup: Option<(String, Instant)>,
+    /// Run-source chooser dialog: (app_name, global_cmd, local_cmd, cursor)
+    pub run_source_dialog: Option<(String, Vec<String>, Vec<String>, usize)>,
 }
 
 impl TuixState {
@@ -85,6 +87,7 @@ impl TuixState {
             settings: SettingsState::new(),
             app_store: AppStoreState::new(),
             popup: None,
+            run_source_dialog: None,
         }
     }
 }

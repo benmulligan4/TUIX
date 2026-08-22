@@ -859,21 +859,34 @@ fn execute_action(
             state.focus = FocusTarget::Main;
             return NavResult::ActivateInternalApp;
         } else {
+            // Check if installed in both PATH and Downloads
             let cmd: Vec<String> = meta
                 .and_then(|m| m.get("cmd"))
                 .and_then(|c| c.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                        .collect()
-                })
+                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
                 .unwrap_or_default();
-            if !cmd.is_empty() {
+
+            // Check if the app also exists in the other location
+            let crate_name = cmd.first().map(|s| s.as_str()).unwrap_or(name);
+            let has_global = app_store::actions::detect_global_install(crate_name).is_some();
+            let category = meta.and_then(|m| m.get("category")).and_then(|v| v.as_str()).unwrap_or("Other");
+            let has_local = app_store::actions::detect_local_install(name, category).is_some();
+
+            if has_global && has_local {
+                // Build both command options
+                let global_cmd = vec![crate_name.to_string()];
+                let local_subdir = if category == "Dashboard" { "dashboards" } else { "applications" };
+                let local_bin = format!("downloads/{}/{}/target/release/{}", local_subdir, name, crate_name);
+                let local_cmd = vec![local_bin];
+                state.run_source_dialog = Some((name.to_string(), global_cmd, local_cmd, 0));
+                state.focus = FocusTarget::Main;
+                state.nav_expanded = false;
+            } else if !cmd.is_empty() {
                 process_manager::launch(name, &cmd);
+                state.active_app = Some(name.to_string());
+                state.active_page = None;
+                state.focus = FocusTarget::Main;
             }
-            state.active_app = Some(name.to_string());
-            state.active_page = None;
-            state.focus = FocusTarget::Main;
         }
     } else if let Some(page_name) = data.strip_prefix("page:") {
         logging::info(&format!("Opened page: {}", page_name));
@@ -1503,10 +1516,42 @@ fn handle_appstore_action(
     };
     let status = ss.install_statuses.get(&key).cloned().unwrap_or(InstallStatus::NotInstalled);
     let is_pre_installed = meta.get("pre_installed").and_then(|v| v.as_bool()).unwrap_or(false);
+    let is_installed = !matches!(status, InstallStatus::NotInstalled);
+
+    // For installed apps, index 0 = Run, then the rest shift by 1
+    if is_installed && ss.right_action_cursor == 0 {
+        // Run the app — if both locations, show run source dialog
+        let crate_name = meta.get("crate_name").and_then(|v| v.as_str()).unwrap_or(&key);
+        let category = meta.get("category").and_then(|v| v.as_str()).unwrap_or("Other");
+        let has_global = app_store::actions::detect_global_install(crate_name).is_some();
+        let has_local = app_store::actions::detect_local_install(&key, category).is_some();
+
+        if has_global && has_local {
+            let global_cmd = vec![crate_name.to_string()];
+            let local_subdir = if category == "Dashboard" { "dashboards" } else { "applications" };
+            let local_bin = format!("downloads/{}/{}/target/release/{}", local_subdir, key, crate_name);
+            let local_cmd = vec![local_bin];
+            state.run_source_dialog = Some((key.clone(), global_cmd, local_cmd, 0));
+        } else {
+            let cmd: Vec<String> = meta.get("cmd")
+                .and_then(|c| c.as_array())
+                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+                .unwrap_or_default();
+            if !cmd.is_empty() {
+                process_manager::launch(&key, &cmd);
+                state.active_app = Some(key.clone());
+                state.active_page = None;
+            }
+        }
+        return;
+    }
+
+    // Offset cursor for installed apps (Run button takes index 0)
+    let cursor = if is_installed { ss.right_action_cursor - 1 } else { ss.right_action_cursor };
 
     match &status {
         InstallStatus::NotInstalled => {
-            match ss.right_action_cursor {
+            match cursor {
                 0 => {
                     // Open Repository
                     let repo = meta.get("repository").and_then(|v| v.as_str()).unwrap_or("");
@@ -1556,7 +1601,7 @@ fn handle_appstore_action(
             }
         }
         InstallStatus::Global(path) => {
-            match ss.right_action_cursor {
+            match cursor {
                 0 => {
                     let repo = meta.get("repository").and_then(|v| v.as_str()).unwrap_or("");
                     if !repo.is_empty() { app_store::actions::open_url(repo); }
@@ -1583,7 +1628,7 @@ fn handle_appstore_action(
             }
         }
         InstallStatus::Local(path) => {
-            match ss.right_action_cursor {
+            match cursor {
                 0 => {
                     let repo = meta.get("repository").and_then(|v| v.as_str()).unwrap_or("");
                     if !repo.is_empty() { app_store::actions::open_url(repo); }
@@ -1602,7 +1647,7 @@ fn handle_appstore_action(
         InstallStatus::Both(g_path, l_path) => {
             if is_pre_installed {
                 // Pre-installed: no PATH uninstall. Buttons: Open Repo, Uninstall Downloads, Open PATH, Open Downloads
-                match ss.right_action_cursor {
+                match cursor {
                     0 => {
                         let repo = meta.get("repository").and_then(|v| v.as_str()).unwrap_or("");
                         if !repo.is_empty() { app_store::actions::open_url(repo); }
@@ -1622,7 +1667,7 @@ fn handle_appstore_action(
                     _ => {}
                 }
             } else {
-                match ss.right_action_cursor {
+                match cursor {
                     0 => {
                         let repo = meta.get("repository").and_then(|v| v.as_str()).unwrap_or("");
                         if !repo.is_empty() { app_store::actions::open_url(repo); }
@@ -1825,6 +1870,52 @@ fn run_app() -> bool {
                         );
                     }
                 }
+
+                // 5. Draw run source chooser dialog if active
+                if let Some((ref app_name, _, _, cursor)) = state.run_source_dialog {
+                    let title = format!("Run {} from:", app_name);
+                    let width = (title.len() + 10).max(36) as u16;
+                    let height = 6u16;
+                    let area = frame.area();
+                    let popup_rect = Rect {
+                        x: area.width.saturating_sub(width) / 2,
+                        y: area.height.saturating_sub(height) / 2,
+                        width: width.min(area.width),
+                        height,
+                    };
+                    frame.render_widget(Clear, popup_rect);
+                    frame.render_widget(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .title(" Choose Run Source ")
+                            .style(Style::default().fg(Color::Cyan).bg(Color::Black)),
+                        popup_rect,
+                    );
+                    let inner = popup_rect.inner(Margin { horizontal: 1, vertical: 1 });
+                    let path_style = if cursor == 0 {
+                        Style::default().fg(Color::Black).bg(Color::Cyan)
+                    } else {
+                        Style::default().fg(Color::White)
+                    };
+                    let local_style = if cursor == 1 {
+                        Style::default().fg(Color::Black).bg(Color::Cyan)
+                    } else {
+                        Style::default().fg(Color::White)
+                    };
+                    let lines = vec![
+                        ratatui::text::Line::from(ratatui::text::Span::styled(&title, Style::default().fg(Color::White))),
+                        ratatui::text::Line::from(""),
+                        ratatui::text::Line::from(ratatui::text::Span::styled(
+                            if cursor == 0 { "  » PATH (global install)" } else { "    PATH (global install)" },
+                            path_style,
+                        )),
+                        ratatui::text::Line::from(ratatui::text::Span::styled(
+                            if cursor == 1 { "  » Downloads (local build)" } else { "    Downloads (local build)" },
+                            local_style,
+                        )),
+                    ];
+                    frame.render_widget(Paragraph::new(lines), inner);
+                }
             })
             .expect("Failed to draw frame");
 
@@ -1850,6 +1941,34 @@ fn run_app() -> bool {
             Event::Key(key) if key.kind == KeyEventKind::Press => key,
             _ => continue,
         };
+
+        // ---- Intercept: Run source chooser dialog ----
+        if state.run_source_dialog.is_some() {
+            match key_event.code {
+                crossterm::event::KeyCode::Up | crossterm::event::KeyCode::Char('w') => {
+                    if let Some((_, _, _, ref mut c)) = state.run_source_dialog { *c = 0; }
+                }
+                crossterm::event::KeyCode::Down | crossterm::event::KeyCode::Char('s') => {
+                    if let Some((_, _, _, ref mut c)) = state.run_source_dialog { *c = 1; }
+                }
+                crossterm::event::KeyCode::Enter | crossterm::event::KeyCode::Char('e') => {
+                    if let Some((name, global_cmd, local_cmd, cursor)) = state.run_source_dialog.take() {
+                        let cmd = if cursor == 0 { global_cmd } else { local_cmd };
+                        if !cmd.is_empty() {
+                            process_manager::launch(&name, &cmd);
+                        }
+                        state.active_app = Some(name);
+                        state.active_page = None;
+                        state.focus = FocusTarget::Main;
+                    }
+                }
+                crossterm::event::KeyCode::Esc | crossterm::event::KeyCode::Char('q') | crossterm::event::KeyCode::Backspace => {
+                    state.run_source_dialog = None;
+                }
+                _ => {}
+            }
+            continue;
+        }
 
         // ---- Intercept: Settings awaiting_key mode (captures ANY key) ----
         if state.focus == FocusTarget::Main

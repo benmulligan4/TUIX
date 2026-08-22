@@ -316,6 +316,18 @@ fn render_right_pane(
     let in_actions = state.focus == AppStoreFocus::RightPane && state.in_right_actions;
     let mut action_idx: usize = 0;
 
+    // Run button (only for installed apps)
+    let is_installed = !matches!(install_status, InstallStatus::NotInstalled);
+    if is_installed {
+        let run_style = if in_actions && state.right_action_cursor == action_idx {
+            Style::default().fg(Color::Black).bg(Color::Cyan)
+        } else {
+            Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)
+        };
+        lines.push(Line::from(Span::styled("  [ Run ]", run_style)));
+        action_idx += 1;
+    }
+
     // Open Repository
     let repo_style = if in_actions && state.right_action_cursor == action_idx {
         Style::default().fg(Color::Black).bg(Color::Cyan)
@@ -714,22 +726,16 @@ fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
 
 /// Get the number of action buttons for the current app's install status.
 pub fn action_count(status: &InstallStatus, is_pre_installed: bool) -> usize {
-    match status {
+    let run_btn = if matches!(status, InstallStatus::NotInstalled) { 0 } else { 1 };
+    let base = match status {
         InstallStatus::NotInstalled => 2,    // Open Repo, Install
         InstallStatus::Global(_) => {
-            if is_pre_installed {
-                3  // Open Repo, Install to Downloads, Open Location
-            } else {
-                3  // Open Repo, Uninstall, Open Location
-            }
+            if is_pre_installed { 3 } else { 3 }  // Open Repo, (Un)install/Install-local, Open Location
         }
         InstallStatus::Local(_) => 3,        // Open Repo, Uninstall, Open Location
         InstallStatus::Both(_, _) => {
-            if is_pre_installed {
-                4  // Open Repo, Uninstall Downloads, Open PATH, Open Downloads
-            } else {
-                5  // Open Repo, Uninstall PATH, Uninstall Downloads, Open PATH, Open Downloads
-            }
+            if is_pre_installed { 4 } else { 5 }
         }
-    }
+    };
+    run_btn + base
 }
