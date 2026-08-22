@@ -1323,16 +1323,17 @@ fn handle_appstore_key(
                         ss.start_operation(key.clone(), true, Some(location));
                         let output = ss.thread_output.clone();
                         let done = ss.thread_done.clone();
+                        let ok_flag = ss.thread_success.clone();
 
                         match location {
                             InstallLocation::Global => {
                                 let crate_name = meta.get("crate_name").and_then(|v| v.as_str()).unwrap_or(&key).to_string();
-                                app_store::actions::spawn_install_global(&crate_name, output, done);
+                                app_store::actions::spawn_install_global(&crate_name, output, done, ok_flag);
                             }
                             InstallLocation::Local => {
                                 let repo = meta.get("repository").and_then(|v| v.as_str()).unwrap_or("").to_string();
                                 let category = meta.get("category").and_then(|v| v.as_str()).unwrap_or("Other").to_string();
-                                app_store::actions::spawn_install_local(&key, &repo, &category, output, done);
+                                app_store::actions::spawn_install_local(&key, &repo, &category, output, done, ok_flag);
                             }
                         }
                     }
@@ -1586,15 +1587,16 @@ fn handle_appstore_action(
                         ss.start_operation(key.clone(), true, Some(methods[0]));
                         let output = ss.thread_output.clone();
                         let done = ss.thread_done.clone();
+                        let ok_flag = ss.thread_success.clone();
                         match methods[0] {
                             InstallLocation::Global => {
                                 let crate_name = meta.get("crate_name").and_then(|v| v.as_str()).unwrap_or(&key).to_string();
-                                app_store::actions::spawn_install_global(&crate_name, output, done);
+                                app_store::actions::spawn_install_global(&crate_name, output, done, ok_flag);
                             }
                             InstallLocation::Local => {
                                 let repo = meta.get("repository").and_then(|v| v.as_str()).unwrap_or("").to_string();
                                 let category = meta.get("category").and_then(|v| v.as_str()).unwrap_or("Other").to_string();
-                                app_store::actions::spawn_install_local(&key, &repo, &category, output, done);
+                                app_store::actions::spawn_install_local(&key, &repo, &category, output, done, ok_flag);
                             }
                         }
                     } else {
@@ -1624,7 +1626,8 @@ fn handle_appstore_action(
                     ss.start_operation(key.clone(), true, Some(InstallLocation::Local));
                     let output = ss.thread_output.clone();
                     let done = ss.thread_done.clone();
-                    app_store::actions::spawn_install_local(&key, &repo, &category, output, done);
+                    let ok_flag = ss.thread_success.clone();
+                    app_store::actions::spawn_install_local(&key, &repo, &category, output, done, ok_flag);
                 }
                 3 => {
                     let dir = app_store::actions::install_dir_from_path(path);
@@ -1650,7 +1653,8 @@ fn handle_appstore_action(
                     ss.start_operation(key.clone(), true, Some(InstallLocation::Global));
                     let output = ss.thread_output.clone();
                     let done = ss.thread_done.clone();
-                    app_store::actions::spawn_install_global(&crate_name, output, done);
+                    let ok_flag = ss.thread_success.clone();
+                    app_store::actions::spawn_install_global(&crate_name, output, done, ok_flag);
                 }
                 3 => {
                     let dir = app_store::actions::install_dir_from_path(path);
@@ -1782,20 +1786,26 @@ fn run_app() -> bool {
         if state.app_store.operation_running {
             let just_finished = state.app_store.poll_operation();
             if just_finished {
-                // Operation completed — update config and show popup
+                let op_succeeded = state.app_store.thread_success.load(std::sync::atomic::Ordering::Relaxed);
+
                 if let Some(ref key) = state.app_store.pending_op_key.clone() {
                     if state.app_store.pending_is_install {
-                        if let Some(location) = state.app_store.pending_install_location {
-                            if let Some(meta) = registered_apps.get(key) {
-                                app_store::actions::add_to_config(key, meta, &location);
+                        if op_succeeded {
+                            if let Some(location) = state.app_store.pending_install_location {
+                                if let Some(meta) = registered_apps.get(key) {
+                                    app_store::actions::add_to_config(key, meta, &location);
+                                }
                             }
+                            let loc_label = match state.app_store.pending_install_location {
+                                Some(crate::app_store::state::InstallLocation::Global) => "PATH",
+                                Some(crate::app_store::state::InstallLocation::Local) => "Downloads",
+                                None => "unknown",
+                            };
+                            state.popup = Some((format!("Installed {} to {}", key, loc_label), Instant::now()));
+                        } else {
+                            state.popup = Some((format!("Failed to install {}", key), Instant::now()));
+                            logging::error(&format!("App Store: install failed for {}", key));
                         }
-                        let loc_label = match state.app_store.pending_install_location {
-                            Some(crate::app_store::state::InstallLocation::Global) => "PATH",
-                            Some(crate::app_store::state::InstallLocation::Local) => "Downloads",
-                            None => "unknown",
-                        };
-                        state.popup = Some((format!("Installed {} to {}", key, loc_label), Instant::now()));
                     } else {
                         state.popup = Some((format!("Uninstalled {}", key), Instant::now()));
                     }

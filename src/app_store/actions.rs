@@ -419,14 +419,16 @@ fn run_streaming(cmd: &str, args: &[&str], output: &Arc<Mutex<Vec<String>>>) -> 
 }
 
 /// Spawn install_global in a background thread.
-pub fn spawn_install_global(crate_name: &str, output: Arc<Mutex<Vec<String>>>, done: Arc<AtomicBool>) {
+pub fn spawn_install_global(crate_name: &str, output: Arc<Mutex<Vec<String>>>, done: Arc<AtomicBool>, success: Arc<AtomicBool>) {
     let crate_name = crate_name.to_string();
     thread::spawn(move || {
         let ok = run_streaming("cargo", &["install", &crate_name], &output);
         if ok {
             push_output(&output, format!("✓ Successfully installed {}", crate_name));
+            success.store(true, Ordering::Relaxed);
         } else {
             push_output(&output, format!("✗ Failed to install {}", crate_name));
+            logging::error(&format!("App Store: cargo install failed for {}", crate_name));
         }
         done.store(true, Ordering::Relaxed);
     });
@@ -439,6 +441,7 @@ pub fn spawn_install_local(
     category: &str,
     output: Arc<Mutex<Vec<String>>>,
     done: Arc<AtomicBool>,
+    success: Arc<AtomicBool>,
 ) {
     let app_key = app_key.to_string();
     let repo_url = repo_url.to_string();
@@ -447,19 +450,23 @@ pub fn spawn_install_local(
         let subdir = if category == "Dashboard" { "dashboards" } else { "applications" };
         let target_dir = format!("downloads/{}/{}", subdir, app_key);
         let _ = std::fs::create_dir_all(format!("downloads/{}", subdir));
+        let freshly_cloned = !std::path::Path::new(&target_dir).exists();
 
-        if std::path::Path::new(&target_dir).exists() {
+        if !freshly_cloned {
             push_output(&output, format!("Directory {} already exists, pulling...", target_dir));
             let ok = run_streaming("git", &["-C", &target_dir, "pull"], &output);
             if !ok {
-                push_output(&output, "Git pull failed.".into());
+                push_output(&output, "✗ Git pull failed.".into());
+                logging::error(&format!("App Store: git pull failed for {}", app_key));
                 done.store(true, Ordering::Relaxed);
                 return;
             }
         } else {
             let ok = run_streaming("git", &["clone", &repo_url, &target_dir], &output);
             if !ok {
-                push_output(&output, "Git clone failed.".into());
+                push_output(&output, "✗ Git clone failed — cleaning up.".into());
+                logging::error(&format!("App Store: git clone failed for {}", app_key));
+                let _ = std::fs::remove_dir_all(&target_dir);
                 done.store(true, Ordering::Relaxed);
                 return;
             }
@@ -482,8 +489,14 @@ pub fn spawn_install_local(
         let ok = run_streaming("cargo", &["build", "--release", "--manifest-path", &manifest], &output);
         if ok {
             push_output(&output, format!("✓ Successfully built {}", app_key));
+            success.store(true, Ordering::Relaxed);
         } else {
-            push_output(&output, format!("✗ Build failed for {}", app_key));
+            push_output(&output, format!("✗ Build failed for {} — cleaning up.", app_key));
+            logging::error(&format!("App Store: cargo build failed for {}", app_key));
+            if freshly_cloned {
+                let _ = std::fs::remove_dir_all(&target_dir);
+                push_output(&output, "Removed partial install directory.".into());
+            }
         }
         done.store(true, Ordering::Relaxed);
     });
