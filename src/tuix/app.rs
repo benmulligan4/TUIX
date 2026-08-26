@@ -778,57 +778,79 @@ fn execute_action(
 
     if let Some(name) = data.strip_prefix("dashboard:") {
         logging::info(&format!("Navigated to dashboard: {}", name));
-        state.active_dashboard = name.to_string();
-        state.active_page = None;
-        state.active_app = None;
-        state.focus = FocusTarget::Main;
+
+        // Check window mode preference for this dashboard
+        let window_mode = app_store::actions::get_window_mode(name, registered_apps.get(name));
 
         // Check if this is an installed (third-party) dashboard
         if let Some(meta) = dashboards_registry.get(name) {
             let dash_type = meta.get("type").and_then(|t| t.as_str()).unwrap_or("");
             if dash_type == "installed" {
                 let source = meta.get("source").and_then(|s| s.as_str()).unwrap_or("global");
-                let cmd: Vec<String> = if source == "local" {
-                    // Run from local downloads path
-                    let local_bin = format!("downloads/dashboards/{}/target/release/{}", name, name);
-                    let local_path = std::path::Path::new(&local_bin);
-                    if local_path.exists() {
+
+                // Determine the command to run based on run source preference
+                let crate_name = meta.get("cmd")
+                    .and_then(|c| c.as_array())
+                    .and_then(|arr| arr.first())
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(name);
+                let has_global = app_store::actions::detect_global_install(crate_name).is_some();
+                let has_local = app_store::actions::detect_local_install(name, "Dashboard").is_some();
+
+                let cmd: Vec<String> = if has_global && has_local {
+                    let preferred = app_store::actions::get_run_source(name);
+                    if preferred == "local" {
+                        logging::info(&format!("Running dashboard {} from Downloads source", name));
+                        vec![format!("downloads/dashboards/{}/target/release/{}", name, crate_name)]
+                    } else {
+                        logging::info(&format!("Running dashboard {} from PATH source", name));
+                        vec![crate_name.to_string()]
+                    }
+                } else if source == "local" {
+                    let local_bin = format!("downloads/dashboards/{}/target/release/{}", name, crate_name);
+                    if std::path::Path::new(&local_bin).exists() {
                         vec![local_bin]
                     } else {
-                        logging::error(&format!("Local binary not found for dashboard {}: {}", name, local_bin));
+                        logging::error(&format!("Local binary not found for dashboard {}", name));
                         vec![]
                     }
                 } else {
-                    // Run from global PATH (cargo install puts it in ~/.cargo/bin/)
                     meta.get("cmd")
                         .and_then(|c| c.as_array())
-                        .map(|arr| {
-                            arr.iter()
-                                .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                                .collect()
-                        })
+                        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
                         .unwrap_or_default()
                 };
 
-                let label = meta
-                    .get("label")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or(name)
-                    .to_string();
+                if window_mode == "fullscreen" && !cmd.is_empty() {
+                    logging::info(&format!("Launching dashboard {} in fullscreen mode", name));
+                    *active_installed_dash = None;
+                    return NavResult::RunForeground(cmd);
+                }
 
-                // Kill previous installed dashboard if any
+                logging::info(&format!("Launching dashboard {} in embedded TUIX mode", name));
+                state.active_dashboard = name.to_string();
+                state.active_page = None;
+                state.active_app = None;
+                state.focus = FocusTarget::Main;
+
+                let label = meta.get("label").and_then(|v| v.as_str()).unwrap_or(name).to_string();
                 *active_installed_dash = None;
-
-                // Spawn new one (use default size, will resize on first render)
                 if !cmd.is_empty() {
-                    *active_installed_dash =
-                        InstalledDashboard::start(name, &label, &cmd, 80, 24);
+                    *active_installed_dash = InstalledDashboard::start(name, &label, &cmd, 80, 24);
                 }
             } else {
                 // Switching to a built-in dashboard; drop any installed one
+                state.active_dashboard = name.to_string();
+                state.active_page = None;
+                state.active_app = None;
+                state.focus = FocusTarget::Main;
                 *active_installed_dash = None;
             }
         } else {
+            state.active_dashboard = name.to_string();
+            state.active_page = None;
+            state.active_app = None;
+            state.focus = FocusTarget::Main;
             *active_installed_dash = None;
         }
     } else if let Some(name) = data.strip_prefix("app:") {
