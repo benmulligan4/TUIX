@@ -895,6 +895,7 @@ fn execute_action(
                     return NavResult::RunForeground(launch_cmd);
                 }
 
+                logging::info(&format!("Launching {} in embedded TUIX mode", name));
                 process_manager::launch(name, &launch_cmd);
                 state.active_app = Some(name.to_string());
                 state.active_page = None;
@@ -907,6 +908,7 @@ fn execute_action(
                     return NavResult::RunForeground(cmd);
                 }
 
+                logging::info(&format!("Launching {} in embedded TUIX mode", name));
                 process_manager::launch(name, &cmd);
                 state.active_app = Some(name.to_string());
                 state.active_page = None;
@@ -1579,6 +1581,7 @@ fn handle_appstore_action(
                 logging::info(&format!("App Store: running {} from PATH source", key));
                 vec![crate_name.to_string()]
             };
+            logging::info(&format!("App Store: launching {} in embedded TUIX mode", key));
             process_manager::launch(&key, &launch_cmd);
             state.active_app = Some(key.clone());
             state.active_page = None;
@@ -1588,6 +1591,7 @@ fn handle_appstore_action(
                 .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
                 .unwrap_or_default();
             if !cmd.is_empty() {
+                logging::info(&format!("App Store: launching {} in embedded TUIX mode", key));
                 process_manager::launch(&key, &cmd);
                 state.active_app = Some(key.clone());
                 state.active_page = None;
