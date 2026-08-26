@@ -28,5 +28,20 @@
     "install_methods": ["global", "local"],
     "default_window_mode": "fullscreen",
     "supports_embedded": false
+  },
+  "wordl": {
+    "label": "Wordl — Terminal Wordle",
+    "description": "Terminal Wordle with web-like GUI experience. Features keyboard hints, slow reveal letter color animations, and a clean interface. Type your guess and press Enter, use Backspace to clear, Ctrl-N for a new game, Esc to quit. Built with Ratatui.",
+    "category": "Games",
+    "author": "palerdot",
+    "version": "0.3.0",
+    "license": "GPL-3.0",
+    "repository": "https://github.com/palerdot/wordl-rs",
+    "crate_name": "wordl",
+    "cmd": ["wordl"],
+    "pre_installed": false,
+    "install_methods": ["global"],
+    "default_window_mode": "embedded",
+    "supports_embedded": true
   }
 }
