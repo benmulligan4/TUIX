@@ -567,6 +567,7 @@ fn render_main(
     state: &mut TuixState,
     active_internal_app: &mut Option<InternalApp>,
     active_installed_dash: &mut Option<InstalledDashboard>,
+    active_installed_app: &mut Option<InstalledDashboard>,
     registered_apps: &std::collections::HashMap<String, Value>,
 ) {
     let focused = state.focus == FocusTarget::Main;
@@ -593,6 +594,8 @@ fn render_main(
     } else if state.active_app.is_some() {
         if let Some(app) = active_internal_app {
             app.render(frame, area, border_style);
+        } else if let Some(pty_app) = active_installed_app {
+            pty_app.render(frame, area, border_style);
         } else if let Some(app_name) = &state.active_app {
             render_app_log(frame, area, app_name, border_style);
         }
@@ -675,6 +678,7 @@ fn handle_navbar_key(
     registered_apps: &std::collections::HashMap<String, Value>,
     active_internal_app: &mut Option<InternalApp>,
     active_installed_dash: &mut Option<InstalledDashboard>,
+    active_installed_app: &mut Option<InstalledDashboard>,
 ) -> NavResult {
     // Tab focus toggle is now handled at the raw event level
 
@@ -716,6 +720,7 @@ fn handle_navbar_key(
                             registered_apps,
                             active_internal_app,
                             active_installed_dash,
+                            active_installed_app,
                         );
                     }
                 }
@@ -754,6 +759,7 @@ fn handle_navbar_key(
                         registered_apps,
                         active_internal_app,
                         active_installed_dash,
+                        active_installed_app,
                     );
                 }
             }
@@ -772,6 +778,7 @@ fn execute_action(
     registered_apps: &std::collections::HashMap<String, Value>,
     active_internal_app: &mut Option<InternalApp>,
     active_installed_dash: &mut Option<InstalledDashboard>,
+    active_installed_app: &mut Option<InstalledDashboard>,
 ) -> NavResult {
     state.nav_expanded = false;
     state.dropdown_cursor = 0;
@@ -918,7 +925,7 @@ fn execute_action(
                 }
 
                 logging::info(&format!("Launching {} in embedded TUIX mode", name));
-                process_manager::launch(name, &launch_cmd);
+                *active_installed_app = InstalledDashboard::start(name, name, &launch_cmd, 80, 24);
                 state.active_app = Some(name.to_string());
                 state.active_page = None;
                 state.focus = FocusTarget::Main;
@@ -931,7 +938,7 @@ fn execute_action(
                 }
 
                 logging::info(&format!("Launching {} in embedded TUIX mode", name));
-                process_manager::launch(name, &cmd);
+                *active_installed_app = InstalledDashboard::start(name, name, &cmd, 80, 24);
                 state.active_app = Some(name.to_string());
                 state.active_page = None;
                 state.focus = FocusTarget::Main;
@@ -993,6 +1000,7 @@ fn handle_main_key(
     state: &mut TuixState,
     active_internal_app: &mut Option<InternalApp>,
     active_installed_dash: &mut Option<InstalledDashboard>,
+    active_installed_app: &mut Option<InstalledDashboard>,
     registered_apps: &std::collections::HashMap<String, Value>,
 ) -> MainResult {
     // App store page handles its own Quit/Back (pane/dialog switching)
@@ -1023,7 +1031,7 @@ fn handle_main_key(
             }
             return MainResult::None;
         }
-        handle_appstore_key(action, state, registered_apps);
+        handle_appstore_key(action, state, registered_apps, active_installed_app);
         return MainResult::None;
     }
 
@@ -1066,6 +1074,7 @@ fn handle_main_key(
             }
             state.active_app = None;
             *active_internal_app = None;
+            *active_installed_app = None;
             return MainResult::None;
         } else if active_installed_dash.is_some() {
             // Close the installed dashboard and go back to default
@@ -1233,7 +1242,7 @@ fn handle_main_key(
 
     // App Store page navigation
     if matches!(state.active_page.as_deref(), Some("appstore")) {
-        handle_appstore_key(action, state, registered_apps);
+        handle_appstore_key(action, state, registered_apps, active_installed_app);
         return MainResult::None;
     }
 
@@ -1259,6 +1268,7 @@ fn handle_appstore_key(
     action: Action,
     state: &mut TuixState,
     registered_apps: &std::collections::HashMap<String, Value>,
+    active_installed_app: &mut Option<InstalledDashboard>,
 ) {
     use crate::app_store::state::{AppStoreFocus, ConfirmAction, InstallLocation, InstallStatus, SortMode};
 
@@ -1543,7 +1553,7 @@ fn handle_appstore_key(
                         }
                     }
                     Action::Enter => {
-                        handle_appstore_action(state, registered_apps);
+                        handle_appstore_action(state, registered_apps, active_installed_app);
                     }
                     Action::Back | Action::Left => {
                         ss.focus = AppStoreFocus::LeftPane;
@@ -1580,6 +1590,7 @@ fn handle_appstore_key(
 fn handle_appstore_action(
     state: &mut TuixState,
     registered_apps: &std::collections::HashMap<String, Value>,
+    active_installed_app: &mut Option<InstalledDashboard>,
 ) {
     use crate::app_store::state::{ConfirmAction, InstallLocation, InstallStatus};
 
@@ -1615,7 +1626,7 @@ fn handle_appstore_action(
                 vec![crate_name.to_string()]
             };
             logging::info(&format!("App Store: launching {} in embedded TUIX mode", key));
-            process_manager::launch(&key, &launch_cmd);
+            *active_installed_app = InstalledDashboard::start(&key, &key, &launch_cmd, 80, 24);
             state.active_app = Some(key.clone());
             state.active_page = None;
         } else {
@@ -1625,7 +1636,7 @@ fn handle_appstore_action(
                 .unwrap_or_default();
             if !cmd.is_empty() {
                 logging::info(&format!("App Store: launching {} in embedded TUIX mode", key));
-                process_manager::launch(&key, &cmd);
+                *active_installed_app = InstalledDashboard::start(&key, &key, &cmd, 80, 24);
                 state.active_app = Some(key.clone());
                 state.active_page = None;
             }
@@ -1874,6 +1885,7 @@ fn run_app() -> bool {
     let mut nav_items = build_nav_items(&dashboards, &apps_registry);
     let mut active_internal_app: Option<InternalApp> = None;
     let mut active_installed_dash: Option<InstalledDashboard> = None;
+    let mut active_installed_app: Option<InstalledDashboard> = None;
 
     // Auto-launch default dashboard if it's an installed (third-party) one
     if let Some(meta) = dashboards.get(&default_dashboard) {
@@ -2029,7 +2041,7 @@ fn run_app() -> bool {
                     .split(frame.area());
 
                 // 1. Draw main container
-                render_main(frame, rows[1], &mut state, &mut active_internal_app, &mut active_installed_dash, &registered_apps);
+                render_main(frame, rows[1], &mut state, &mut active_internal_app, &mut active_installed_dash, &mut active_installed_app, &registered_apps);
 
                 // 2. Draw navbar label row
                 render_navbar(frame, rows[0], &nav_items, &state);
@@ -2333,13 +2345,14 @@ fn run_app() -> bool {
                     match handle_navbar_key(
                         a, &mut state, &nav_items, &apps_registry, &dashboards,
                         &registered_apps, &mut active_internal_app, &mut active_installed_dash,
+                        &mut active_installed_app,
                     ) {
                         NavResult::Quit => break,
                         NavResult::Restart => { should_restart = true; break; }
                         _ => {}
                     }
                 } else {
-                    match handle_main_key(a, &mut state, &mut active_internal_app, &mut active_installed_dash, &registered_apps) {
+                    match handle_main_key(a, &mut state, &mut active_internal_app, &mut active_installed_dash, &mut active_installed_app, &registered_apps) {
                         MainResult::Quit => break,
                         MainResult::Restart => { should_restart = true; break; }
                         _ => {}
@@ -2373,6 +2386,7 @@ fn run_app() -> bool {
                                         &registered_apps,
                                         &mut active_internal_app,
                                         &mut active_installed_dash,
+                                        &mut active_installed_app,
                                     );
                                     match result {
                                         NavResult::Quit => break,
@@ -2411,6 +2425,31 @@ fn run_app() -> bool {
                             continue;
                         }
                     }
+                }
+            }
+        }
+
+        // Forward raw key events to installed (PTY) app in the main container
+        if state.focus == FocusTarget::Main
+            && active_installed_app.is_some()
+            && state.active_app.is_some()
+            && state.active_page.is_none()
+        {
+            match key_event.code {
+                crossterm::event::KeyCode::Backspace => {
+                    active_installed_app.take();
+                    state.active_app = None;
+                    continue;
+                }
+                crossterm::event::KeyCode::Tab => {
+                    state.focus = FocusTarget::Navbar;
+                    continue;
+                }
+                _ => {
+                    if let Some(pty_app) = &mut active_installed_app {
+                        pty_app.send_key_event(key_event);
+                    }
+                    continue;
                 }
             }
         }
@@ -2569,6 +2608,7 @@ fn run_app() -> bool {
                 &registered_apps,
                 &mut active_internal_app,
                 &mut active_installed_dash,
+                &mut active_installed_app,
             ) {
                 NavResult::Quit => break,
                 NavResult::Restart => {
@@ -2587,7 +2627,7 @@ fn run_app() -> bool {
                 NavResult::ActivateInternalApp | NavResult::None => {}
             }
         } else {
-            match handle_main_key(action, &mut state, &mut active_internal_app, &mut active_installed_dash, &registered_apps) {
+            match handle_main_key(action, &mut state, &mut active_internal_app, &mut active_installed_dash, &mut active_installed_app, &registered_apps) {
                 MainResult::Quit => break,
                 MainResult::Restart => {
                     should_restart = true;
@@ -2609,8 +2649,9 @@ fn run_app() -> bool {
         }
     }
 
-    // Drop installed dashboard PTY before restoring terminal
+    // Drop PTY runners before restoring terminal
     drop(active_installed_dash);
+    drop(active_installed_app);
     drop(active_internal_app);
 
     // Restore terminal
