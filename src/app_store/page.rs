@@ -141,6 +141,11 @@ fn render_left_pane(
     lines.push(Line::from(Span::styled(filter_label, filter_style)));
 
     lines.push(Line::from(Span::styled(
+        " [R] Refresh installed apps",
+        Style::default().fg(Color::DarkGray),
+    )));
+
+    lines.push(Line::from(Span::styled(
         " ─────────────────────────────",
         Style::default().fg(Color::DarkGray),
     )));

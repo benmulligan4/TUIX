@@ -940,7 +940,10 @@ fn execute_action(
     } else if let Some(page_name) = data.strip_prefix("page:") {
         logging::info(&format!("Opened page: {}", page_name));
         if page_name == "logs" {
-            state.log_scroll = 0; // 0 = show bottom (most recent entries)
+            state.log_scroll = 0;
+        }
+        if page_name == "appstore" {
+            state.needs_sync = true;
         }
         state.active_page = Some(page_name.to_string());
         state.active_app = None;
@@ -1848,9 +1851,13 @@ fn run_app() -> bool {
     logging::info("TUIX started");
 
     let settings_map = registry::load_settings();
+    let registered_apps = registry::load_registered_apps();
+
+    // Sync config files with actual installs on disk/PATH before loading
+    app_store::actions::sync_installed_apps(&registered_apps);
+
     let mut dashboards = registry::load_dashboards();
     let mut apps_registry = registry::load_apps();
-    let registered_apps = registry::load_registered_apps();
 
     let default_dashboard = settings_map
         .get("default_dashboard")
@@ -1987,6 +1994,20 @@ fn run_app() -> bool {
                 }
                 state.app_store.pending_op_key = None;
                 state.app_store.pending_install_location = None;
+            }
+        }
+
+        // Handle deferred sync request (triggered when opening app store)
+        if state.needs_sync {
+            state.needs_sync = false;
+            let changed = app_store::actions::sync_installed_apps(&registered_apps);
+            state.app_store.install_statuses = app_store::actions::refresh_all_statuses(&registered_apps);
+            state.app_store.recompute_app_list(&registered_apps);
+            if changed {
+                dashboards = registry::load_dashboards();
+                apps_registry = registry::load_apps();
+                nav_items = build_nav_items(&dashboards, &apps_registry);
+                state.popup = Some(("App list synced with installed apps".to_string(), Instant::now()));
             }
         }
 
@@ -2497,6 +2518,21 @@ fn run_app() -> bool {
                     'u' | 'U' => {
                         state.app_store.filter_show_uninstalled = !state.app_store.filter_show_uninstalled;
                         state.app_store.recompute_app_list(&registered_apps);
+                        continue;
+                    }
+                    'r' | 'R' => {
+                        logging::info("App Store: manual refresh triggered");
+                        let changed = app_store::actions::sync_installed_apps(&registered_apps);
+                        state.app_store.install_statuses = app_store::actions::refresh_all_statuses(&registered_apps);
+                        state.app_store.recompute_app_list(&registered_apps);
+                        dashboards = registry::load_dashboards();
+                        apps_registry = registry::load_apps();
+                        nav_items = build_nav_items(&dashboards, &apps_registry);
+                        if changed {
+                            state.popup = Some(("App list synced with installed apps".to_string(), Instant::now()));
+                        } else {
+                            state.popup = Some(("App list is up to date".to_string(), Instant::now()));
+                        }
                         continue;
                     }
                     _ => {}

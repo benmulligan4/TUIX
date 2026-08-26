@@ -325,6 +325,79 @@ pub fn remove_from_config(app_key: &str, category: &str) {
     logging::info(&format!("App Store: removed {} from {}", app_key, config_file));
 }
 
+/// Sync apps.json and dashboards.json with what's actually installed on disk/PATH.
+/// Adds entries for apps found installed but not in config, removes entries for apps
+/// no longer found. Returns true if any changes were made.
+pub fn sync_installed_apps(registered: &HashMap<String, Value>) -> bool {
+    let mut changed = false;
+    let mut apps_config = registry::load_apps();
+    let mut dash_config = registry::load_dashboards();
+
+    for (key, meta) in registered {
+        let category = meta.get("category").and_then(|v| v.as_str()).unwrap_or("Other");
+        let config = if category == "Dashboard" { &mut dash_config } else { &mut apps_config };
+        let status = get_install_status(key, meta);
+
+        match status {
+            InstallStatus::NotInstalled => {
+                // If config has it but it's no longer installed, remove it
+                if config.contains_key(key) {
+                    config.remove(key);
+                    logging::info(&format!("App Store sync: removed {} (no longer installed)", key));
+                    changed = true;
+                }
+            }
+            InstallStatus::Global(_) | InstallStatus::Local(_) | InstallStatus::Both(_, _) => {
+                // If installed but not in config, add it
+                if !config.contains_key(key) {
+                    let location = match &status {
+                        InstallStatus::Global(_) => InstallLocation::Global,
+                        InstallStatus::Local(_) => InstallLocation::Local,
+                        InstallStatus::Both(_, _) => InstallLocation::Global,
+                        _ => InstallLocation::Global,
+                    };
+                    let label = meta.get("label").and_then(|v| v.as_str()).unwrap_or(key);
+                    let version = meta.get("version").and_then(|v| v.as_str()).unwrap_or("unknown");
+                    let repo = meta.get("repository").and_then(|v| v.as_str()).unwrap_or("");
+                    let source = match &location {
+                        InstallLocation::Global => "global",
+                        InstallLocation::Local => "local",
+                    };
+                    let cmd: Vec<Value> = match &location {
+                        InstallLocation::Local => {
+                            let subdir = if category == "Dashboard" { "dashboards" } else { "applications" };
+                            let bin_name = meta.get("crate_name").and_then(|v| v.as_str()).unwrap_or(key);
+                            vec![Value::String(format!("downloads/{}/{}/target/release/{}", subdir, key, bin_name))]
+                        }
+                        InstallLocation::Global => {
+                            meta.get("cmd").and_then(|c| c.as_array()).cloned().unwrap_or_default()
+                        }
+                    };
+                    let entry = json!({
+                        "label": label,
+                        "type": "installed",
+                        "source": source,
+                        "repository": repo,
+                        "version": version,
+                        "cmd": cmd,
+                    });
+                    config.insert(key.clone(), entry);
+                    logging::info(&format!("App Store sync: added {} (found installed)", key));
+                    changed = true;
+                }
+            }
+        }
+    }
+
+    if changed {
+        registry::save_config("apps.json", &apps_config);
+        registry::save_config("dashboards.json", &dash_config);
+        logging::info("App Store sync: configs updated");
+    }
+
+    changed
+}
+
 /// Open a URL in the system browser.
 pub fn open_url(url: &str) -> bool {
     logging::info(&format!("App Store: opening URL: {}", url));

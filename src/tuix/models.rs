@@ -69,6 +69,8 @@ pub struct TuixState {
     pub popup: Option<(String, Instant)>,
     /// Run-source chooser dialog: (app_name, global_cmd, local_cmd, cursor)
     pub run_source_dialog: Option<(String, Vec<String>, Vec<String>, usize)>,
+    /// Flag: main loop should re-sync installed apps and refresh nav
+    pub needs_sync: bool,
 }
 
 impl TuixState {
@@ -88,6 +90,7 @@ impl TuixState {
             app_store: AppStoreState::new(),
             popup: None,
             run_source_dialog: None,
+            needs_sync: false,
         }
     }
 }
