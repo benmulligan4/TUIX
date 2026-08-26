@@ -315,6 +315,13 @@ fn render_right_pane(
     let in_actions = state.focus == AppStoreFocus::RightPane && state.in_right_actions;
     let mut action_idx: usize = 0;
 
+    let install_methods: Vec<&str> = meta.get("install_methods")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
+        .unwrap_or_else(|| vec!["global"]);
+    let supports_local = install_methods.contains(&"local");
+    let supports_global = install_methods.contains(&"global");
+
     // Run button (only for installed apps)
     let is_installed = !matches!(install_status, InstallStatus::NotInstalled);
     if is_installed {
@@ -355,13 +362,20 @@ fn render_right_pane(
             lines.push(Line::from(Span::styled("  [ Uninstall from PATH ]", uninstall_style)));
             action_idx += 1;
 
-            let install_local_style = if in_actions && state.right_action_cursor == action_idx {
-                Style::default().fg(Color::Black).bg(Color::Cyan)
+            if supports_local {
+                let install_local_style = if in_actions && state.right_action_cursor == action_idx {
+                    Style::default().fg(Color::Black).bg(Color::Cyan)
+                } else {
+                    Style::default().fg(Color::Green)
+                };
+                lines.push(Line::from(Span::styled("  [ Install to Downloads ]", install_local_style)));
+                action_idx += 1;
             } else {
-                Style::default().fg(Color::Green)
-            };
-            lines.push(Line::from(Span::styled("  [ Install to Downloads ]", install_local_style)));
-            action_idx += 1;
+                lines.push(Line::from(Span::styled(
+                    "    (local install not supported for this app)",
+                    Style::default().fg(Color::DarkGray),
+                )));
+            }
 
             let open_style = if in_actions && state.right_action_cursor == action_idx {
                 Style::default().fg(Color::Black).bg(Color::Cyan)
@@ -379,13 +393,20 @@ fn render_right_pane(
             lines.push(Line::from(Span::styled("  [ Uninstall from Downloads ]", uninstall_style)));
             action_idx += 1;
 
-            let install_path_style = if in_actions && state.right_action_cursor == action_idx {
-                Style::default().fg(Color::Black).bg(Color::Cyan)
+            if supports_global {
+                let install_path_style = if in_actions && state.right_action_cursor == action_idx {
+                    Style::default().fg(Color::Black).bg(Color::Cyan)
+                } else {
+                    Style::default().fg(Color::Green)
+                };
+                lines.push(Line::from(Span::styled("  [ Install to PATH ]", install_path_style)));
+                action_idx += 1;
             } else {
-                Style::default().fg(Color::Green)
-            };
-            lines.push(Line::from(Span::styled("  [ Install to PATH ]", install_path_style)));
-            action_idx += 1;
+                lines.push(Line::from(Span::styled(
+                    "    (PATH install not supported for this app)",
+                    Style::default().fg(Color::DarkGray),
+                )));
+            }
 
             let open_style = if in_actions && state.right_action_cursor == action_idx {
                 Style::default().fg(Color::Black).bg(Color::Cyan)
@@ -791,14 +812,18 @@ fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
 }
 
 /// Get the number of action buttons for the current app's install status.
-pub fn action_count(status: &InstallStatus, supports_embed: bool) -> usize {
+pub fn action_count(status: &InstallStatus, supports_embed: bool, supports_local: bool, supports_global: bool) -> usize {
     let run_btn = if matches!(status, InstallStatus::NotInstalled) { 0 } else { 1 };
-    // Window mode toggle only shown for installed apps that support embedded
     let mode_btn = if !matches!(status, InstallStatus::NotInstalled) && supports_embed { 1 } else { 0 };
     let base = match status {
         InstallStatus::NotInstalled => 2,  // Open Repo, Install
-        InstallStatus::Global(_) => 4,     // Open Repo, Uninstall, Install to Downloads, Open Location
-        InstallStatus::Local(_) => 4,      // Open Repo, Uninstall, Install to PATH, Open Location
+        InstallStatus::Global(_) => {
+            // Open Repo, Uninstall, (Install to Downloads if supported), Open Location
+            if supports_local { 4 } else { 3 }
+        }
+        InstallStatus::Local(_) => {
+            if supports_global { 4 } else { 3 }
+        }
         InstallStatus::Both(_, _) => 5,    // Open Repo, Uninstall, Set Source, Open PATH, Open Downloads
     };
     run_btn + base + mode_btn

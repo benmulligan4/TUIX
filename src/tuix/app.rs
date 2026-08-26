@@ -1513,11 +1513,19 @@ fn handle_appstore_key(
                     .and_then(|k| ss.install_statuses.get(k))
                     .cloned()
                     .unwrap_or(InstallStatus::NotInstalled);
-                let supports_embed = ss.selected_app_key()
-                    .and_then(|k| registered_apps.get(k))
+                let app_meta = ss.selected_app_key().and_then(|k| registered_apps.get(k));
+                let supports_embed = app_meta
                     .map(|m| app_store::actions::supports_embedded(Some(m)))
                     .unwrap_or(true);
-                let count = app_store::page::action_count(&status, supports_embed);
+                let methods: Vec<&str> = app_meta
+                    .and_then(|m| m.get("install_methods"))
+                    .and_then(|v| v.as_array())
+                    .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
+                    .unwrap_or_else(|| vec!["global"]);
+                let count = app_store::page::action_count(
+                    &status, supports_embed,
+                    methods.contains(&"local"), methods.contains(&"global"),
+                );
                 match action {
                     Action::Up => {
                         if ss.right_action_cursor > 0 {
@@ -1628,9 +1636,20 @@ fn handle_appstore_action(
     // Window mode toggle is the last button for installed apps that support embedded
     let supports_embed = app_store::actions::supports_embedded(Some(meta));
     if is_installed && supports_embed {
+        let methods: Vec<&str> = meta.get("install_methods")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
+            .unwrap_or_else(|| vec!["global"]);
+        let has_cross_install = match &status {
+            InstallStatus::Global(_) => methods.contains(&"local"),
+            InstallStatus::Local(_) => methods.contains(&"global"),
+            _ => true,
+        };
         let mode_cursor = match &status {
             InstallStatus::NotInstalled => usize::MAX,
-            InstallStatus::Global(_) | InstallStatus::Local(_) => 4,
+            InstallStatus::Global(_) | InstallStatus::Local(_) => {
+                if has_cross_install { 4 } else { 3 }
+            }
             InstallStatus::Both(_, _) => 5,
         };
         if cursor == mode_cursor {
@@ -1691,7 +1710,13 @@ fn handle_appstore_action(
             }
         }
         InstallStatus::Global(path) => {
-            // Buttons: Open Repo(0), Uninstall(1), Install to Downloads(2), Open Location(3)
+            let methods: Vec<&str> = meta.get("install_methods")
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
+                .unwrap_or_else(|| vec!["global"]);
+            let has_local_method = methods.contains(&"local");
+
+            // Buttons: Open Repo(0), Uninstall(1), [Install to Downloads(2) if supported], Open Location
             match cursor {
                 0 => {
                     let repo = meta.get("repository").and_then(|v| v.as_str()).unwrap_or("");
@@ -1701,8 +1726,7 @@ fn handle_appstore_action(
                     ss.confirm_dialog = Some(ConfirmAction::UninstallGlobal(key.clone()));
                     ss.confirm_cursor = 1;
                 }
-                2 => {
-                    // Install to Downloads
+                2 if has_local_method => {
                     let repo = meta.get("repository").and_then(|v| v.as_str()).unwrap_or("").to_string();
                     let category = meta.get("category").and_then(|v| v.as_str()).unwrap_or("Other").to_string();
                     ss.start_operation(key.clone(), true, Some(InstallLocation::Local));
@@ -1711,15 +1735,23 @@ fn handle_appstore_action(
                     let ok_flag = ss.thread_success.clone();
                     app_store::actions::spawn_install_local(&key, &repo, &category, output, done, ok_flag);
                 }
-                3 => {
-                    let dir = app_store::actions::install_dir_from_path(path);
-                    app_store::actions::open_in_os_explorer(&dir);
+                n => {
+                    // Open Location is after the optional Install button
+                    let open_idx = if has_local_method { 3 } else { 2 };
+                    if n == open_idx {
+                        let dir = app_store::actions::install_dir_from_path(path);
+                        app_store::actions::open_in_os_explorer(&dir);
+                    }
                 }
-                _ => {}
             }
         }
         InstallStatus::Local(path) => {
-            // Buttons: Open Repo(0), Uninstall(1), Install to PATH(2), Open Location(3)
+            let methods: Vec<&str> = meta.get("install_methods")
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
+                .unwrap_or_else(|| vec!["global"]);
+            let has_global_method = methods.contains(&"global");
+
             match cursor {
                 0 => {
                     let repo = meta.get("repository").and_then(|v| v.as_str()).unwrap_or("");
@@ -1729,8 +1761,7 @@ fn handle_appstore_action(
                     ss.confirm_dialog = Some(ConfirmAction::UninstallLocal(key.clone()));
                     ss.confirm_cursor = 1;
                 }
-                2 => {
-                    // Install to PATH
+                2 if has_global_method => {
                     let crate_name = meta.get("crate_name").and_then(|v| v.as_str()).unwrap_or(&key).to_string();
                     ss.start_operation(key.clone(), true, Some(InstallLocation::Global));
                     let output = ss.thread_output.clone();
@@ -1738,11 +1769,13 @@ fn handle_appstore_action(
                     let ok_flag = ss.thread_success.clone();
                     app_store::actions::spawn_install_global(&crate_name, output, done, ok_flag);
                 }
-                3 => {
-                    let dir = app_store::actions::install_dir_from_path(path);
-                    app_store::actions::open_in_os_explorer(&dir);
+                n => {
+                    let open_idx = if has_global_method { 3 } else { 2 };
+                    if n == open_idx {
+                        let dir = app_store::actions::install_dir_from_path(path);
+                        app_store::actions::open_in_os_explorer(&dir);
+                    }
                 }
-                _ => {}
             }
         }
         InstallStatus::Both(g_path, l_path) => {
@@ -1928,11 +1961,19 @@ fn run_app() -> bool {
                         .and_then(|k| state.app_store.install_statuses.get(k))
                         .cloned()
                         .unwrap_or(crate::app_store::state::InstallStatus::NotInstalled);
-                    let new_supports_embed = state.app_store.selected_app_key()
-                        .and_then(|k| registered_apps.get(k))
+                    let new_meta = state.app_store.selected_app_key().and_then(|k| registered_apps.get(k));
+                    let new_supports_embed = new_meta
                         .map(|m| app_store::actions::supports_embedded(Some(m)))
                         .unwrap_or(true);
-                    let new_count = app_store::page::action_count(&new_status, new_supports_embed);
+                    let new_methods: Vec<&str> = new_meta
+                        .and_then(|m| m.get("install_methods"))
+                        .and_then(|v| v.as_array())
+                        .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
+                        .unwrap_or_else(|| vec!["global"]);
+                    let new_count = app_store::page::action_count(
+                        &new_status, new_supports_embed,
+                        new_methods.contains(&"local"), new_methods.contains(&"global"),
+                    );
                     if state.app_store.right_action_cursor >= new_count {
                         state.app_store.right_action_cursor = 0;
                     }
