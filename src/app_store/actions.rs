@@ -375,6 +375,39 @@ pub fn set_run_source(app_key: &str, source: &str) {
     logging::info(&format!("App Store: set run source for {} to {}", app_key, source));
 }
 
+/// Get the window mode for an app ("embedded" or "fullscreen"). Falls back to registered default.
+pub fn get_window_mode(app_key: &str, registered_meta: Option<&serde_json::Value>) -> String {
+    let settings = crate::settings::persistence::load();
+    let path = format!("app_store.window_modes.{}", app_key);
+    let saved = crate::settings::persistence::get_str(&settings, &path, "");
+    if !saved.is_empty() {
+        return saved;
+    }
+    // Fall back to registered-apps.json default
+    registered_meta
+        .and_then(|m| m.get("default_window_mode"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("embedded")
+        .to_string()
+}
+
+/// Set the window mode for an app.
+pub fn set_window_mode(app_key: &str, mode: &str) {
+    let mut settings = crate::settings::persistence::load();
+    let path = format!("app_store.window_modes.{}", app_key);
+    crate::settings::persistence::set(&mut settings, &path, serde_json::Value::String(mode.to_string()));
+    crate::settings::persistence::save(&settings);
+    logging::info(&format!("App Store: set window mode for {} to {}", app_key, mode));
+}
+
+/// Check if an app supports running embedded in TUIX.
+pub fn supports_embedded(registered_meta: Option<&serde_json::Value>) -> bool {
+    registered_meta
+        .and_then(|m| m.get("supports_embedded"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true)
+}
+
 // --- Thread-spawning variants for non-blocking UI ---
 
 pub fn push_output(buf: &Arc<Mutex<Vec<String>>>, line: String) {

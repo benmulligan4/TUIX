@@ -438,6 +438,36 @@ fn render_right_pane(
         }
     }
 
+    // Window mode setting (for installed apps)
+    if is_installed {
+        let supports_embed = super::actions::supports_embedded(registered.get(&selected_key));
+        lines.push(Line::from(""));
+        action_idx += 1;
+
+        if !supports_embed {
+            lines.push(Line::from(Span::styled(
+                "  ⚠ This app only supports fullscreen mode",
+                Style::default().fg(Color::Yellow),
+            )));
+            lines.push(Line::from(Span::styled(
+                "    (running inside TUIX is not supported yet)",
+                Style::default().fg(Color::DarkGray),
+            )));
+        } else {
+            let current_mode = super::actions::get_window_mode(&selected_key, registered.get(&selected_key));
+            let mode_label = if current_mode == "fullscreen" { "Fullscreen" } else { "TUIX Container" };
+            let mode_style = if in_actions && state.right_action_cursor == action_idx {
+                Style::default().fg(Color::Black).bg(Color::Cyan)
+            } else {
+                Style::default().fg(Color::Yellow)
+            };
+            lines.push(Line::from(Span::styled(
+                format!("  [ Window Mode: {} — press to switch ]", mode_label),
+                mode_style,
+            )));
+        }
+    }
+
     // Apply scroll offset
     let visible_height = right_inner.height as usize;
     let total_lines = lines.len();
@@ -761,13 +791,15 @@ fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
 }
 
 /// Get the number of action buttons for the current app's install status.
-pub fn action_count(status: &InstallStatus) -> usize {
+pub fn action_count(status: &InstallStatus, supports_embed: bool) -> usize {
     let run_btn = if matches!(status, InstallStatus::NotInstalled) { 0 } else { 1 };
+    // Window mode toggle only shown for installed apps that support embedded
+    let mode_btn = if !matches!(status, InstallStatus::NotInstalled) && supports_embed { 1 } else { 0 };
     let base = match status {
         InstallStatus::NotInstalled => 2,  // Open Repo, Install
         InstallStatus::Global(_) => 4,     // Open Repo, Uninstall, Install to Downloads, Open Location
         InstallStatus::Local(_) => 4,      // Open Repo, Uninstall, Install to PATH, Open Location
         InstallStatus::Both(_, _) => 5,    // Open Repo, Uninstall, Set Source, Open PATH, Open Downloads
     };
-    run_btn + base
+    run_btn + base + mode_btn
 }

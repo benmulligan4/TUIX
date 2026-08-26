@@ -672,6 +672,7 @@ fn handle_navbar_key(
     nav_items: &[NavItem],
     apps_registry: &std::collections::HashMap<String, Value>,
     dashboards_registry: &std::collections::HashMap<String, Value>,
+    registered_apps: &std::collections::HashMap<String, Value>,
     active_internal_app: &mut Option<InternalApp>,
     active_installed_dash: &mut Option<InstalledDashboard>,
 ) -> NavResult {
@@ -712,6 +713,7 @@ fn handle_navbar_key(
                             state,
                             apps_registry,
                             dashboards_registry,
+                            registered_apps,
                             active_internal_app,
                             active_installed_dash,
                         );
@@ -749,6 +751,7 @@ fn handle_navbar_key(
                         state,
                         apps_registry,
                         dashboards_registry,
+                        registered_apps,
                         active_internal_app,
                         active_installed_dash,
                     );
@@ -766,6 +769,7 @@ fn execute_action(
     state: &mut TuixState,
     apps_registry: &std::collections::HashMap<String, Value>,
     dashboards_registry: &std::collections::HashMap<String, Value>,
+    registered_apps: &std::collections::HashMap<String, Value>,
     active_internal_app: &mut Option<InternalApp>,
     active_installed_dash: &mut Option<InstalledDashboard>,
 ) -> NavResult {
@@ -884,12 +888,25 @@ fn execute_action(
                     logging::info(&format!("Running {} from PATH source", name));
                     vec![crate_name.to_string()]
                 };
+
+                let window_mode = app_store::actions::get_window_mode(name, registered_apps.get(name));
+                if window_mode == "fullscreen" {
+                    logging::info(&format!("Launching {} in fullscreen mode", name));
+                    return NavResult::RunForeground(launch_cmd);
+                }
+
                 process_manager::launch(name, &launch_cmd);
                 state.active_app = Some(name.to_string());
                 state.active_page = None;
                 state.focus = FocusTarget::Main;
                 state.nav_expanded = false;
             } else if !cmd.is_empty() {
+                let window_mode = app_store::actions::get_window_mode(name, registered_apps.get(name));
+                if window_mode == "fullscreen" {
+                    logging::info(&format!("Launching {} in fullscreen mode", name));
+                    return NavResult::RunForeground(cmd);
+                }
+
                 process_manager::launch(name, &cmd);
                 state.active_app = Some(name.to_string());
                 state.active_page = None;
@@ -1472,7 +1489,11 @@ fn handle_appstore_key(
                     .and_then(|k| ss.install_statuses.get(k))
                     .cloned()
                     .unwrap_or(InstallStatus::NotInstalled);
-                let count = app_store::page::action_count(&status);
+                let supports_embed = ss.selected_app_key()
+                    .and_then(|k| registered_apps.get(k))
+                    .map(|m| app_store::actions::supports_embedded(Some(m)))
+                    .unwrap_or(true);
+                let count = app_store::page::action_count(&status, supports_embed);
                 match action {
                     Action::Up => {
                         if ss.right_action_cursor > 0 {
@@ -1577,6 +1598,24 @@ fn handle_appstore_action(
 
     // Offset cursor for installed apps (Run button takes index 0)
     let cursor = if is_installed { ss.right_action_cursor - 1 } else { ss.right_action_cursor };
+
+    // Window mode toggle is the last button for installed apps that support embedded
+    let supports_embed = app_store::actions::supports_embedded(Some(meta));
+    if is_installed && supports_embed {
+        let mode_cursor = match &status {
+            InstallStatus::NotInstalled => usize::MAX,
+            InstallStatus::Global(_) | InstallStatus::Local(_) => 4,
+            InstallStatus::Both(_, _) => 5,
+        };
+        if cursor == mode_cursor {
+            let current = app_store::actions::get_window_mode(&key, Some(meta));
+            let new_mode = if current == "fullscreen" { "embedded" } else { "fullscreen" };
+            app_store::actions::set_window_mode(&key, new_mode);
+            let label = if new_mode == "fullscreen" { "Fullscreen" } else { "TUIX Container" };
+            state.popup = Some((format!("Window mode set to {}", label), Instant::now()));
+            return;
+        }
+    }
 
     match &status {
         InstallStatus::NotInstalled => {
@@ -1863,7 +1902,11 @@ fn run_app() -> bool {
                         .and_then(|k| state.app_store.install_statuses.get(k))
                         .cloned()
                         .unwrap_or(crate::app_store::state::InstallStatus::NotInstalled);
-                    let new_count = app_store::page::action_count(&new_status);
+                    let new_supports_embed = state.app_store.selected_app_key()
+                        .and_then(|k| registered_apps.get(k))
+                        .map(|m| app_store::actions::supports_embedded(Some(m)))
+                        .unwrap_or(true);
+                    let new_count = app_store::page::action_count(&new_status, new_supports_embed);
                     if state.app_store.right_action_cursor >= new_count {
                         state.app_store.right_action_cursor = 0;
                     }
@@ -2201,7 +2244,7 @@ fn run_app() -> bool {
                 if state.focus == FocusTarget::Navbar {
                     match handle_navbar_key(
                         a, &mut state, &nav_items, &apps_registry, &dashboards,
-                        &mut active_internal_app, &mut active_installed_dash,
+                        &registered_apps, &mut active_internal_app, &mut active_installed_dash,
                     ) {
                         NavResult::Quit => break,
                         NavResult::Restart => { should_restart = true; break; }
@@ -2239,6 +2282,7 @@ fn run_app() -> bool {
                                         &mut state,
                                         &apps_registry,
                                         &dashboards,
+                                        &registered_apps,
                                         &mut active_internal_app,
                                         &mut active_installed_dash,
                                     );
@@ -2419,6 +2463,7 @@ fn run_app() -> bool {
                 &nav_items,
                 &apps_registry,
                 &dashboards,
+                &registered_apps,
                 &mut active_internal_app,
                 &mut active_installed_dash,
             ) {
