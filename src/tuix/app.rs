@@ -1013,11 +1013,10 @@ fn handle_main_key(
                 ss.confirm_cursor = 0;
             } else if ss.install_location_dialog {
                 ss.install_location_dialog = false;
-            } else if ss.sort_dropdown_open {
-                ss.sort_dropdown_open = false;
+            } else if ss.filter_panel_open {
+                ss.filter_panel_open = false;
                 ss.focus = crate::app_store::state::AppStoreFocus::LeftPane;
-            } else if ss.filter_dropdown_open {
-                ss.filter_dropdown_open = false;
+            } else if ss.focus == crate::app_store::state::AppStoreFocus::FilterPanel {
                 ss.focus = crate::app_store::state::AppStoreFocus::LeftPane;
             } else if ss.focus == crate::app_store::state::AppStoreFocus::RightPane {
                 ss.focus = crate::app_store::state::AppStoreFocus::LeftPane;
@@ -1270,7 +1269,7 @@ fn handle_appstore_key(
     registered_apps: &std::collections::HashMap<String, Value>,
     active_installed_app: &mut Option<InstalledDashboard>,
 ) {
-    use crate::app_store::state::{AppStoreFocus, ConfirmAction, InstallLocation, InstallStatus, SortMode};
+    use crate::app_store::state::{AppStoreFocus, ConfirmAction, InstallLocation, InstallStatus};
 
     let ss = &mut state.app_store;
 
@@ -1409,69 +1408,108 @@ fn handle_appstore_key(
         return;
     }
 
-    // Sort dropdown
-    if ss.sort_dropdown_open {
-        match action {
-            Action::Up => {
-                if ss.sort_dropdown_cursor > 0 {
-                    ss.sort_dropdown_cursor -= 1;
-                }
-            }
-            Action::Down => {
-                if ss.sort_dropdown_cursor < SortMode::ALL.len().saturating_sub(1) {
-                    ss.sort_dropdown_cursor += 1;
-                }
-            }
-            Action::Enter => {
-                ss.sort_mode = SortMode::ALL[ss.sort_dropdown_cursor];
-                ss.sort_dropdown_open = false;
-                ss.focus = AppStoreFocus::LeftPane;
-                ss.recompute_app_list(registered_apps);
-            }
-            Action::Back => {
-                ss.sort_dropdown_open = false;
-                ss.focus = AppStoreFocus::LeftPane;
-            }
-            _ => {}
-        }
-        return;
-    }
-
-    // Filter dropdown
-    if ss.filter_dropdown_open {
-        let categories = crate::app_store::state::AppStoreState::all_categories(registered_apps);
-        match action {
-            Action::Up => {
-                if ss.filter_dropdown_cursor > 0 {
-                    ss.filter_dropdown_cursor -= 1;
-                }
-            }
-            Action::Down => {
-                if ss.filter_dropdown_cursor < categories.len().saturating_sub(1) {
-                    ss.filter_dropdown_cursor += 1;
-                }
-            }
-            Action::Enter => {
-                if let Some(cat) = categories.get(ss.filter_dropdown_cursor) {
-                    if ss.filter_categories.contains(cat) {
-                        ss.filter_categories.remove(cat);
-                    } else {
-                        ss.filter_categories.insert(cat.clone());
-                    }
-                    ss.recompute_app_list(registered_apps);
-                }
-            }
-            Action::Back => {
-                ss.filter_dropdown_open = false;
-                ss.focus = AppStoreFocus::LeftPane;
-            }
-            _ => {}
-        }
-        return;
-    }
-
     // Main pane navigation
     match ss.focus {
+        AppStoreFocus::FilterPanel => {
+            let categories = crate::app_store::state::AppStoreState::all_categories(registered_apps);
+            let refresh_idx = ss.refresh_cursor_idx(registered_apps);
+            let max_cursor = ss.filter_max_cursor(registered_apps);
+
+            // Sort dropdown is open — handle it first
+            if ss.sort_dropdown_open {
+                match action {
+                    Action::Up => {
+                        if ss.sort_dropdown_cursor > 0 {
+                            ss.sort_dropdown_cursor -= 1;
+                        }
+                    }
+                    Action::Down => {
+                        if ss.sort_dropdown_cursor < crate::app_store::state::SortMode::ALL.len().saturating_sub(1) {
+                            ss.sort_dropdown_cursor += 1;
+                        }
+                    }
+                    Action::Enter => {
+                        ss.sort_mode = crate::app_store::state::SortMode::ALL[ss.sort_dropdown_cursor];
+                        ss.sort_dropdown_open = false;
+                        ss.recompute_app_list(registered_apps);
+                    }
+                    Action::Back => {
+                        ss.sort_dropdown_open = false;
+                    }
+                    _ => {}
+                }
+                return;
+            }
+
+            match action {
+                Action::Up => {
+                    if ss.filter_panel_cursor > 0 {
+                        ss.filter_panel_cursor -= 1;
+                    } else {
+                        ss.focus = AppStoreFocus::SearchBar;
+                    }
+                }
+                Action::Down => {
+                    if ss.filter_panel_cursor < max_cursor {
+                        ss.filter_panel_cursor += 1;
+                    } else {
+                        ss.focus = AppStoreFocus::LeftPane;
+                    }
+                }
+                Action::Enter => {
+                    if ss.filter_panel_cursor == 0 {
+                        // Toggle panel open/close
+                        ss.filter_panel_open = !ss.filter_panel_open;
+                        if !ss.filter_panel_open {
+                            ss.sort_dropdown_open = false;
+                        }
+                    } else if ss.filter_panel_cursor == refresh_idx {
+                        // Refresh
+                        logging::info("App Store: manual refresh triggered");
+                        state.needs_sync = true;
+                    } else if ss.filter_panel_open {
+                        match ss.filter_panel_cursor {
+                            1 => {
+                                // Open sort dropdown
+                                ss.sort_dropdown_open = !ss.sort_dropdown_open;
+                                ss.sort_dropdown_cursor = crate::app_store::state::SortMode::ALL
+                                    .iter().position(|m| *m == ss.sort_mode).unwrap_or(0);
+                            }
+                            2 => {
+                                ss.filter_show_installed = !ss.filter_show_installed;
+                                ss.recompute_app_list(registered_apps);
+                            }
+                            3 => {
+                                ss.filter_show_uninstalled = !ss.filter_show_uninstalled;
+                                ss.recompute_app_list(registered_apps);
+                            }
+                            n if n >= 4 && n < 4 + categories.len() => {
+                                let cat_idx = n - 4;
+                                if let Some(cat) = categories.get(cat_idx) {
+                                    if ss.filter_categories.contains(cat) {
+                                        ss.filter_categories.remove(cat);
+                                    } else {
+                                        ss.filter_categories.insert(cat.clone());
+                                    }
+                                    ss.recompute_app_list(registered_apps);
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                Action::Back => {
+                    if ss.filter_panel_open {
+                        ss.filter_panel_open = false;
+                        ss.sort_dropdown_open = false;
+                    } else {
+                        ss.focus = AppStoreFocus::LeftPane;
+                    }
+                }
+                _ => {}
+            }
+            return;
+        }
         AppStoreFocus::SearchBar => {
             match action {
                 Action::Back => {
@@ -1483,7 +1521,8 @@ fn handle_appstore_key(
                     }
                 }
                 Action::Enter | Action::Down => {
-                    ss.focus = AppStoreFocus::LeftPane;
+                    ss.focus = AppStoreFocus::FilterPanel;
+                    ss.filter_panel_cursor = 0;
                 }
                 _ => {}
             }
@@ -1495,8 +1534,8 @@ fn handle_appstore_key(
                         ss.left_cursor -= 1;
                         ss.reset_right_pane();
                     } else {
-                        // At top of list, move to search bar
-                        ss.focus = AppStoreFocus::SearchBar;
+                        ss.focus = AppStoreFocus::FilterPanel;
+                        ss.filter_panel_cursor = ss.refresh_cursor_idx(registered_apps);
                     }
                 }
                 Action::Down => {
@@ -2009,8 +2048,10 @@ fn run_app() -> bool {
             }
         }
 
-        // Handle deferred sync request (triggered when opening app store)
+        // Handle deferred sync request (triggered when opening app store or refresh button)
         if state.needs_sync {
+            let show_popup = matches!(state.active_page.as_deref(), Some("appstore"))
+                && state.app_store.focus == crate::app_store::state::AppStoreFocus::FilterPanel;
             state.needs_sync = false;
             let changed = app_store::actions::sync_installed_apps(&registered_apps);
             state.app_store.install_statuses = app_store::actions::refresh_all_statuses(&registered_apps);
@@ -2019,6 +2060,14 @@ fn run_app() -> bool {
                 dashboards = registry::load_dashboards();
                 apps_registry = registry::load_apps();
                 nav_items = build_nav_items(&dashboards, &apps_registry);
+            }
+            if show_popup {
+                if changed {
+                    state.popup = Some(("App list synced with installed apps".to_string(), Instant::now()));
+                } else {
+                    state.popup = Some(("App list is up to date".to_string(), Instant::now()));
+                }
+            } else if changed {
                 state.popup = Some(("App list synced with installed apps".to_string(), Instant::now()));
             }
         }
@@ -2517,7 +2566,7 @@ fn run_app() -> bool {
             }
         }
 
-        // App Store shortcut keys (when in left pane, not in search/dropdown)
+        // App Store shortcut keys (when in left pane)
         if state.focus == FocusTarget::Main
             && matches!(state.active_page.as_deref(), Some("appstore"))
             && state.app_store.focus == crate::app_store::state::AppStoreFocus::LeftPane
@@ -2527,51 +2576,6 @@ fn run_app() -> bool {
                 match ch {
                     '/' => {
                         state.app_store.focus = crate::app_store::state::AppStoreFocus::SearchBar;
-                        continue;
-                    }
-                    'f' | 'F' => {
-                        state.app_store.filter_dropdown_open = !state.app_store.filter_dropdown_open;
-                        state.app_store.filter_dropdown_cursor = 0;
-                        if state.app_store.filter_dropdown_open {
-                            state.app_store.focus = crate::app_store::state::AppStoreFocus::FilterDropdown;
-                        } else {
-                            state.app_store.focus = crate::app_store::state::AppStoreFocus::LeftPane;
-                        }
-                        continue;
-                    }
-                    'o' | 'O' => {
-                        state.app_store.sort_dropdown_open = !state.app_store.sort_dropdown_open;
-                        state.app_store.sort_dropdown_cursor = 0;
-                        if state.app_store.sort_dropdown_open {
-                            state.app_store.focus = crate::app_store::state::AppStoreFocus::SortDropdown;
-                        } else {
-                            state.app_store.focus = crate::app_store::state::AppStoreFocus::LeftPane;
-                        }
-                        continue;
-                    }
-                    'i' | 'I' => {
-                        state.app_store.filter_show_installed = !state.app_store.filter_show_installed;
-                        state.app_store.recompute_app_list(&registered_apps);
-                        continue;
-                    }
-                    'u' | 'U' => {
-                        state.app_store.filter_show_uninstalled = !state.app_store.filter_show_uninstalled;
-                        state.app_store.recompute_app_list(&registered_apps);
-                        continue;
-                    }
-                    'r' | 'R' => {
-                        logging::info("App Store: manual refresh triggered");
-                        let changed = app_store::actions::sync_installed_apps(&registered_apps);
-                        state.app_store.install_statuses = app_store::actions::refresh_all_statuses(&registered_apps);
-                        state.app_store.recompute_app_list(&registered_apps);
-                        dashboards = registry::load_dashboards();
-                        apps_registry = registry::load_apps();
-                        nav_items = build_nav_items(&dashboards, &apps_registry);
-                        if changed {
-                            state.popup = Some(("App list synced with installed apps".to_string(), Instant::now()));
-                        } else {
-                            state.popup = Some(("App list is up to date".to_string(), Instant::now()));
-                        }
                         continue;
                     }
                     _ => {}

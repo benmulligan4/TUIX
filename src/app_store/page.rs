@@ -15,7 +15,7 @@ use ratatui::{
 };
 use serde_json::Value;
 
-use super::state::{AppStoreFocus, AppStoreState, ConfirmAction, InstallStatus, SortMode};
+use super::state::{AppStoreFocus, AppStoreState, ConfirmAction, InstallStatus};
 
 pub fn render(
     frame: &mut Frame,
@@ -69,12 +69,6 @@ pub fn render(
     if state.install_location_dialog {
         render_install_location_dialog(frame, area, state);
     }
-    if state.sort_dropdown_open {
-        render_sort_dropdown(frame, left_area, state);
-    }
-    if state.filter_dropdown_open {
-        render_filter_dropdown(frame, left_area, state, registered);
-    }
 }
 
 fn render_left_pane(
@@ -83,9 +77,9 @@ fn render_left_pane(
     state: &AppStoreState,
     registered: &HashMap<String, Value>,
 ) {
-    let left_focused = matches!(
+    let in_left = matches!(
         state.focus,
-        AppStoreFocus::LeftPane | AppStoreFocus::SearchBar | AppStoreFocus::SortDropdown | AppStoreFocus::FilterDropdown
+        AppStoreFocus::LeftPane | AppStoreFocus::SearchBar | AppStoreFocus::FilterPanel
     );
 
     let mut lines: Vec<Line> = Vec::new();
@@ -93,7 +87,7 @@ fn render_left_pane(
     // Search bar
     let search_style = if state.focus == AppStoreFocus::SearchBar {
         Style::default().fg(Color::Black).bg(Color::Cyan)
-    } else if left_focused {
+    } else if in_left {
         Style::default().fg(Color::Cyan)
     } else {
         Style::default().fg(Color::DarkGray)
@@ -110,39 +104,95 @@ fn render_left_pane(
         format!(" 🔍 {}", state.search_query)
     };
     lines.push(Line::from(Span::styled(search_text, search_style)));
-    lines.push(Line::from(""));
 
-    // Sort/Filter controls with shortcut hints
-    let sort_label = format!(" [O] Sort: {} ▼", state.sort_mode.label());
-    let sort_style = if state.focus == AppStoreFocus::SortDropdown {
+    // Filter panel toggle
+    let panel_focused = state.focus == AppStoreFocus::FilterPanel;
+    let arrow = if state.filter_panel_open { "▼" } else { "▶" };
+    let panel_style = if panel_focused && state.filter_panel_cursor == 0 {
         Style::default().fg(Color::Black).bg(Color::Cyan)
+    } else if in_left {
+        Style::default().fg(Color::Cyan)
     } else {
         Style::default().fg(Color::DarkGray)
     };
-    lines.push(Line::from(Span::styled(sort_label, sort_style)));
-
-    let installed_check = if state.filter_show_installed { "[✔]" } else { "[ ]" };
-    let uninstalled_check = if state.filter_show_uninstalled { "[✔]" } else { "[ ]" };
     lines.push(Line::from(Span::styled(
-        format!(" [I]{} Installed [U]{} Uninstalled", installed_check, uninstalled_check),
-        Style::default().fg(Color::DarkGray),
+        format!(" {} Filters & Sort", arrow),
+        panel_style,
     )));
 
-    let filter_label = if state.filter_categories.is_empty() {
-        " [F] Filter: All Categories ▼".to_string()
-    } else {
-        format!(" [F] Filter: {} hidden ▼", state.filter_categories.len())
-    };
-    let filter_style = if state.focus == AppStoreFocus::FilterDropdown {
+    if state.filter_panel_open {
+        let categories = AppStoreState::all_categories(registered);
+
+        let item_style = |idx: usize| -> Style {
+            if panel_focused && state.filter_panel_cursor == idx {
+                Style::default().fg(Color::Black).bg(Color::Cyan)
+            } else {
+                Style::default().fg(Color::White)
+            }
+        };
+        let label_style = Style::default().fg(Color::DarkGray);
+
+        // Sort mode (cursor 1)
+        let sort_arrow = if state.sort_dropdown_open { "▲" } else { "▼" };
+        lines.push(Line::from(Span::styled(
+            format!("   Sort: {} {}", state.sort_mode.label(), sort_arrow),
+            item_style(1),
+        )));
+
+        // Sort dropdown (inline, shown when open)
+        if state.sort_dropdown_open {
+            for (si, mode) in crate::app_store::state::SortMode::ALL.iter().enumerate() {
+                let prefix = if si == state.sort_dropdown_cursor { "    » " } else { "      " };
+                let s = if si == state.sort_dropdown_cursor {
+                    Style::default().fg(Color::Black).bg(Color::Cyan)
+                } else {
+                    Style::default().fg(Color::DarkGray)
+                };
+                lines.push(Line::from(Span::styled(
+                    format!("{}{}", prefix, mode.label()),
+                    s,
+                )));
+            }
+        }
+
+        // Show Installed (cursor 2)
+        let i_check = if state.filter_show_installed { "[✔]" } else { "[ ]" };
+        lines.push(Line::from(Span::styled(
+            format!("   {}  Show Installed", i_check),
+            item_style(2),
+        )));
+
+        // Show Uninstalled (cursor 3)
+        let u_check = if state.filter_show_uninstalled { "[✔]" } else { "[ ]" };
+        lines.push(Line::from(Span::styled(
+            format!("   {}  Show Uninstalled", u_check),
+            item_style(3),
+        )));
+
+        // Category filters (cursor 4..4+N-1)
+        if !categories.is_empty() {
+            lines.push(Line::from(Span::styled("   Categories:", label_style)));
+        }
+        for (ci, cat) in categories.iter().enumerate() {
+            let is_shown = !state.filter_categories.contains(cat);
+            let check = if is_shown { "[✔]" } else { "[ ]" };
+            lines.push(Line::from(Span::styled(
+                format!("    {}  {}", check, cat),
+                item_style(4 + ci),
+            )));
+        }
+    }
+
+    // Refresh button (always visible, outside the panel)
+    let refresh_idx = state.refresh_cursor_idx(registered);
+    let refresh_style = if panel_focused && state.filter_panel_cursor == refresh_idx {
         Style::default().fg(Color::Black).bg(Color::Cyan)
     } else {
         Style::default().fg(Color::DarkGray)
     };
-    lines.push(Line::from(Span::styled(filter_label, filter_style)));
-
     lines.push(Line::from(Span::styled(
-        " [R] Refresh installed apps",
-        Style::default().fg(Color::DarkGray),
+        " ↻ Refresh installed apps",
+        refresh_style,
     )));
 
     lines.push(Line::from(Span::styled(
@@ -164,17 +214,17 @@ fn render_left_pane(
         };
         let label = meta.get("label").and_then(|v| v.as_str()).unwrap_or(key);
         let is_selected = i == state.left_cursor;
-        let in_left = state.focus == AppStoreFocus::LeftPane;
+        let in_app_list = state.focus == AppStoreFocus::LeftPane;
 
         let installed_indicator = match state.install_statuses.get(key.as_str()) {
             Some(InstallStatus::NotInstalled) | None => " ",
             _ => "✓",
         };
 
-        let prefix = if is_selected && in_left { " » " } else { "   " };
+        let prefix = if is_selected && in_app_list { " » " } else { "   " };
         let text = format!("{}{} {}", prefix, installed_indicator, label);
 
-        let style = if is_selected && in_left {
+        let style = if is_selected && in_app_list {
             Style::default().fg(Color::Black).bg(Color::Cyan)
         } else if is_selected {
             Style::default().fg(Color::Cyan)
@@ -702,87 +752,6 @@ fn render_install_location_dialog(frame: &mut Frame, area: Rect, state: &AppStor
         let prefix = if i == state.install_location_cursor { "  » " } else { "    " };
         lines.push(Line::from(Span::styled(
             format!("{}{}", prefix, method.label()),
-            style,
-        )));
-    }
-
-    frame.render_widget(Paragraph::new(lines), inner);
-}
-
-fn render_sort_dropdown(frame: &mut Frame, left_area: Rect, state: &AppStoreState) {
-    let dropdown_y = left_area.y + 2;
-    let width = 20u16.min(left_area.width);
-    let height = SortMode::ALL.len() as u16 + 2;
-
-    let dropdown_rect = Rect {
-        x: left_area.x + 1,
-        y: dropdown_y,
-        width,
-        height,
-    };
-
-    frame.render_widget(Clear, dropdown_rect);
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .style(Style::default().fg(Color::Cyan).bg(Color::Black));
-    frame.render_widget(block, dropdown_rect);
-
-    let inner = dropdown_rect.inner(Margin { horizontal: 1, vertical: 1 });
-
-    let mut lines: Vec<Line> = Vec::new();
-    for (i, mode) in SortMode::ALL.iter().enumerate() {
-        let style = if i == state.sort_dropdown_cursor {
-            Style::default().fg(Color::Black).bg(Color::Cyan)
-        } else {
-            Style::default().fg(Color::White)
-        };
-        let prefix = if i == state.sort_dropdown_cursor { " » " } else { "   " };
-        lines.push(Line::from(Span::styled(
-            format!("{}{}", prefix, mode.label()),
-            style,
-        )));
-    }
-
-    frame.render_widget(Paragraph::new(lines), inner);
-}
-
-fn render_filter_dropdown(
-    frame: &mut Frame,
-    left_area: Rect,
-    state: &AppStoreState,
-    registered: &HashMap<String, Value>,
-) {
-    let categories = AppStoreState::all_categories(registered);
-    let width = 30u16.min(left_area.width);
-    let height = (categories.len() as u16 + 2).min(left_area.height);
-    let dropdown_y = left_area.y + 4;
-
-    let dropdown_rect = Rect {
-        x: left_area.x + 1,
-        y: dropdown_y,
-        width,
-        height,
-    };
-
-    frame.render_widget(Clear, dropdown_rect);
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .style(Style::default().fg(Color::Cyan).bg(Color::Black));
-    frame.render_widget(block, dropdown_rect);
-
-    let inner = dropdown_rect.inner(Margin { horizontal: 1, vertical: 1 });
-
-    let mut lines: Vec<Line> = Vec::new();
-    for (i, cat) in categories.iter().enumerate() {
-        let is_active = !state.filter_categories.contains(cat);
-        let check = if is_active { "[✔]" } else { "[ ]" };
-        let style = if i == state.filter_dropdown_cursor {
-            Style::default().fg(Color::Black).bg(Color::Cyan)
-        } else {
-            Style::default().fg(Color::White)
-        };
-        lines.push(Line::from(Span::styled(
-            format!(" {}  {}", check, cat),
             style,
         )));
     }

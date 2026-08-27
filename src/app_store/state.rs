@@ -12,6 +12,7 @@ pub enum SortMode {
 }
 
 impl SortMode {
+    #[allow(dead_code)]
     pub const ALL: &'static [SortMode] = &[
         SortMode::AtoZ,
         SortMode::Author,
@@ -23,6 +24,15 @@ impl SortMode {
             SortMode::AtoZ => "A to Z",
             SortMode::Author => "Author",
             SortMode::Category => "Category",
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn next(&self) -> SortMode {
+        match self {
+            SortMode::AtoZ => SortMode::Author,
+            SortMode::Author => SortMode::Category,
+            SortMode::Category => SortMode::AtoZ,
         }
     }
 }
@@ -64,8 +74,7 @@ pub enum AppStoreFocus {
     LeftPane,
     RightPane,
     SearchBar,
-    SortDropdown,
-    FilterDropdown,
+    FilterPanel,
     ConfirmDialog,
     InstallLocationDialog,
 }
@@ -78,13 +87,13 @@ pub struct AppStoreState {
     pub left_scroll: usize,
     pub right_scroll: usize,
     pub sort_mode: SortMode,
+    pub filter_panel_open: bool,
+    pub filter_panel_cursor: usize,
     pub sort_dropdown_open: bool,
     pub sort_dropdown_cursor: usize,
     pub filter_show_installed: bool,
     pub filter_show_uninstalled: bool,
     pub filter_categories: HashSet<String>,
-    pub filter_dropdown_open: bool,
-    pub filter_dropdown_cursor: usize,
     pub search_query: String,
     pub search_active: bool,
     pub terminal_output: Vec<String>,
@@ -123,13 +132,13 @@ impl AppStoreState {
             left_scroll: 0,
             right_scroll: 0,
             sort_mode: SortMode::AtoZ,
+            filter_panel_open: false,
+            filter_panel_cursor: 0,
             sort_dropdown_open: false,
             sort_dropdown_cursor: 0,
             filter_show_installed: true,
             filter_show_uninstalled: true,
             filter_categories: HashSet::new(),
-            filter_dropdown_open: false,
-            filter_dropdown_cursor: 0,
             search_query: String::new(),
             search_active: false,
             terminal_output: Vec::new(),
@@ -157,6 +166,21 @@ impl AppStoreState {
 
     pub fn selected_app_key(&self) -> Option<&String> {
         self.computed_app_list.get(self.left_cursor)
+    }
+
+    /// Get the cursor index for the refresh button (always after panel items).
+    pub fn refresh_cursor_idx(&self, registered: &HashMap<String, Value>) -> usize {
+        if self.filter_panel_open {
+            let cats = Self::all_categories(registered);
+            4 + cats.len()
+        } else {
+            1
+        }
+    }
+
+    /// Max cursor value for the filter panel area (including refresh).
+    pub fn filter_max_cursor(&self, registered: &HashMap<String, Value>) -> usize {
+        self.refresh_cursor_idx(registered)
     }
 
     /// Sync output from background thread and check completion.
