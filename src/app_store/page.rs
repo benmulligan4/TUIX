@@ -94,14 +94,14 @@ fn render_left_pane(
     };
     let search_text = if state.focus == AppStoreFocus::SearchBar {
         if state.search_query.is_empty() {
-            " 🔍 Type to search...".to_string()
+            " [/] Type to search...".to_string()
         } else {
-            format!(" 🔍 {}▏", state.search_query)
+            format!(" [/] {}|", state.search_query)
         }
     } else if state.search_query.is_empty() {
-        " 🔍 Search [/]".to_string()
+        " [/] Search".to_string()
     } else {
-        format!(" 🔍 {}", state.search_query)
+        format!(" [/] {}", state.search_query)
     };
     lines.push(Line::from(Span::styled(search_text, search_style)));
 
@@ -156,14 +156,14 @@ fn render_left_pane(
         }
 
         // Show Installed (cursor 2)
-        let i_check = if state.filter_show_installed { "[✔]" } else { "[ ]" };
+        let i_check = if state.filter_show_installed { "[*]" } else { "[ ]" };
         lines.push(Line::from(Span::styled(
             format!("   {}  Show Installed", i_check),
             item_style(2),
         )));
 
         // Show Uninstalled (cursor 3)
-        let u_check = if state.filter_show_uninstalled { "[✔]" } else { "[ ]" };
+        let u_check = if state.filter_show_uninstalled { "[*]" } else { "[ ]" };
         lines.push(Line::from(Span::styled(
             format!("   {}  Show Uninstalled", u_check),
             item_style(3),
@@ -175,7 +175,7 @@ fn render_left_pane(
         }
         for (ci, cat) in categories.iter().enumerate() {
             let is_shown = !state.filter_categories.contains(cat);
-            let check = if is_shown { "[✔]" } else { "[ ]" };
+            let check = if is_shown { "[*]" } else { "[ ]" };
             lines.push(Line::from(Span::styled(
                 format!("    {}  {}", check, cat),
                 item_style(4 + ci),
