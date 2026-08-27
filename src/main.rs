@@ -7,6 +7,7 @@ mod touchscreen;
 mod dashboards;
 mod applications;
 mod utilities;
+mod app_store;
 
 fn main() {
     tuix::app::main();

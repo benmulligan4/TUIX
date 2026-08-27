@@ -3,6 +3,7 @@
 use chrono::{DateTime, Utc};
 use std::time::Instant;
 
+use crate::app_store::state::AppStoreState;
 use crate::settings::state::SettingsState;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,8 +63,14 @@ pub struct TuixState {
     pub log_scroll: usize,
     /// Settings page UI state.
     pub settings: SettingsState,
+    /// App Store page UI state.
+    pub app_store: AppStoreState,
     /// Temporary popup message (text, when it was set).
     pub popup: Option<(String, Instant)>,
+    /// Run-source chooser dialog: (app_name, global_cmd, local_cmd, cursor)
+    pub run_source_dialog: Option<(String, Vec<String>, Vec<String>, usize)>,
+    /// Flag: main loop should re-sync installed apps and refresh nav
+    pub needs_sync: bool,
 }
 
 impl TuixState {
@@ -80,7 +87,10 @@ impl TuixState {
             dropdown_cursor: 0,
             log_scroll: 0,
             settings: SettingsState::new(),
+            app_store: AppStoreState::new(),
             popup: None,
+            run_source_dialog: None,
+            needs_sync: false,
         }
     }
 }
