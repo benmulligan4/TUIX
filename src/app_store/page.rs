@@ -121,8 +121,8 @@ fn render_left_pane(
     };
     lines.push(Line::from(Span::styled(sort_label, sort_style)));
 
-    let installed_check = if state.filter_show_installed { "☑" } else { "☐" };
-    let uninstalled_check = if state.filter_show_uninstalled { "☑" } else { "☐" };
+    let installed_check = if state.filter_show_installed { "[✔]" } else { "[ ]" };
+    let uninstalled_check = if state.filter_show_uninstalled { "[✔]" } else { "[ ]" };
     lines.push(Line::from(Span::styled(
         format!(" [I]{} Installed [U]{} Uninstalled", installed_check, uninstalled_check),
         Style::default().fg(Color::DarkGray),
@@ -131,7 +131,7 @@ fn render_left_pane(
     let filter_label = if state.filter_categories.is_empty() {
         " [F] Filter: All Categories ▼".to_string()
     } else {
-        format!(" [F] Filter: {} selected ▼", state.filter_categories.len())
+        format!(" [F] Filter: {} hidden ▼", state.filter_categories.len())
     };
     let filter_style = if state.focus == AppStoreFocus::FilterDropdown {
         Style::default().fg(Color::Black).bg(Color::Cyan)
@@ -774,15 +774,15 @@ fn render_filter_dropdown(
 
     let mut lines: Vec<Line> = Vec::new();
     for (i, cat) in categories.iter().enumerate() {
-        let is_active = state.filter_categories.is_empty() || state.filter_categories.contains(cat);
-        let check = if is_active { "☑" } else { "☐" };
+        let is_active = !state.filter_categories.contains(cat);
+        let check = if is_active { "[✔]" } else { "[ ]" };
         let style = if i == state.filter_dropdown_cursor {
             Style::default().fg(Color::Black).bg(Color::Cyan)
         } else {
             Style::default().fg(Color::White)
         };
         lines.push(Line::from(Span::styled(
-            format!(" {} {}", check, cat),
+            format!(" {}  {}", check, cat),
             style,
         )));
     }

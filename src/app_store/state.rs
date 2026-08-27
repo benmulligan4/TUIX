@@ -243,14 +243,14 @@ impl AppStoreState {
                     return false;
                 }
 
-                // Category filter
+                // Category filter (set contains hidden categories)
                 if !self.filter_categories.is_empty() {
                     let cat = meta
                         .get("category")
                         .and_then(|v| v.as_str())
                         .unwrap_or("Other")
                         .to_string();
-                    if !self.filter_categories.contains(&cat) {
+                    if self.filter_categories.contains(&cat) {
                         return false;
                     }
                 }
