@@ -12,7 +12,8 @@
     "pre_installed": true,
     "install_methods": ["global", "local"],
     "default_window_mode": "embedded",
-    "supports_embedded": true
+    "supports_embedded": true,
+    "approved": true
   },
   "chess-tui": {
     "label": "Chess TUI",
@@ -27,7 +28,8 @@
     "pre_installed": false,
     "install_methods": ["global", "local"],
     "default_window_mode": "embedded",
-    "supports_embedded": true
+    "supports_embedded": true,
+    "approved": true
   },
   "wordl": {
     "label": "Wordl — Terminal Wordle",
@@ -42,6 +44,7 @@
     "pre_installed": false,
     "install_methods": ["global"],
     "default_window_mode": "embedded",
-    "supports_embedded": true
+    "supports_embedded": true,
+    "approved": true
   }
 }

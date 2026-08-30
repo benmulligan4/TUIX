@@ -77,6 +77,7 @@ pub enum AppStoreFocus {
     FilterPanel,
     ConfirmDialog,
     InstallLocationDialog,
+    BrowserButton,
 }
 
 #[derive(Debug, Clone)]
@@ -122,8 +123,9 @@ pub struct AppStoreState {
     pub pending_op_key: Option<String>,
     /// Whether the pending operation is an install (true) or uninstall (false)
     pub pending_is_install: bool,
+    pub failed_installs: HashSet<String>,
     /// Awesome Ratatui browser state
-    pub browser: super::awesome_ratatui::BrowserState,
+    pub browser: super::awesome_ratatui_manager::BrowserState,
 }
 
 impl AppStoreState {
@@ -163,7 +165,8 @@ impl AppStoreState {
             pending_install_location: None,
             pending_op_key: None,
             pending_is_install: false,
-            browser: super::awesome_ratatui::BrowserState::new(),
+            failed_installs: HashSet::new(),
+            browser: super::awesome_ratatui_manager::BrowserState::new(),
         }
     }
 

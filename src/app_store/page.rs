@@ -83,7 +83,7 @@ fn render_left_pane(
 ) {
     let in_left = matches!(
         state.focus,
-        AppStoreFocus::LeftPane | AppStoreFocus::SearchBar | AppStoreFocus::FilterPanel
+        AppStoreFocus::LeftPane | AppStoreFocus::SearchBar | AppStoreFocus::FilterPanel | AppStoreFocus::BrowserButton
     );
 
     let mut lines: Vec<Line> = Vec::new();
@@ -109,9 +109,12 @@ fn render_left_pane(
     };
     lines.push(Line::from(Span::styled(search_text, search_style)));
 
-    // Awesome Ratatui browser button
+    // Awesome Ratatui App Browser button
     let browser_active = state.browser.active;
-    let browser_style = if browser_active {
+    let browser_btn_focused = state.focus == AppStoreFocus::BrowserButton;
+    let browser_style = if browser_btn_focused {
+        Style::default().fg(Color::Black).bg(Color::Cyan)
+    } else if browser_active {
         Style::default().fg(Color::Black).bg(Color::Green)
     } else if in_left {
         Style::default().fg(Color::Green)
@@ -119,7 +122,7 @@ fn render_left_pane(
         Style::default().fg(Color::DarkGray)
     };
     lines.push(Line::from(Span::styled(
-        if browser_active { " ✚ Awesome Ratatui  [open]" } else { " ✚ Awesome Ratatui" },
+        if browser_active { " ✚ Browse Awesome Ratatui  [open]" } else { " ✚ Browse Awesome Ratatui" },
         browser_style,
     )));
 
@@ -242,8 +245,18 @@ fn render_left_pane(
         let prefix = if is_selected && in_app_list { " » " } else { "   " };
         let text = format!("{}{} {}", prefix, installed_indicator, label);
 
+        let is_installed = matches!(
+            state.install_statuses.get(key.as_str()),
+            Some(s) if !matches!(s, InstallStatus::NotInstalled)
+        );
+        let is_failed = state.failed_installs.contains(key);
+
         let style = if is_selected && in_app_list {
             Style::default().fg(Color::Black).bg(Color::Cyan)
+        } else if is_failed {
+            Style::default().fg(Color::Red)
+        } else if is_installed {
+            Style::default().fg(Color::Green)
         } else if is_selected {
             Style::default().fg(Color::Cyan)
         } else {
@@ -314,10 +327,25 @@ fn render_right_pane(
     let title_style = Style::default().fg(Color::White).add_modifier(Modifier::BOLD);
     let accent_style = Style::default().fg(Color::Cyan);
 
+    let is_approved = meta.get("approved").and_then(|v| v.as_bool()).unwrap_or(true);
+
     let mut lines: Vec<Line> = Vec::new();
 
     // Title
     lines.push(Line::from(Span::styled(label, title_style)));
+
+    // Approved badge or experimental warning
+    if is_approved {
+        lines.push(Line::from(Span::styled(
+            "  ✓ TUIX Approved",
+            Style::default().fg(Color::Green),
+        )));
+    } else {
+        lines.push(Line::from(Span::styled(
+            "  ⚠ Experimental — added from Awesome Ratatui",
+            Style::default().fg(Color::Yellow),
+        )));
+    }
     lines.push(Line::from(""));
 
     // Metadata grid
@@ -562,6 +590,18 @@ fn render_right_pane(
         }
     }
 
+    // Remove from App Store (only for non-approved, not-installed apps)
+    if !is_approved && !is_installed {
+        action_idx += 1;
+        let remove_style = if in_actions && state.right_action_cursor == action_idx {
+            Style::default().fg(Color::Black).bg(Color::Cyan)
+        } else {
+            Style::default().fg(Color::Red)
+        };
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled("  [ Remove from App Store ]", remove_style)));
+    }
+
     // Apply scroll offset
     let visible_height = right_inner.height as usize;
     let total_lines = lines.len();
@@ -804,19 +844,19 @@ pub fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
 }
 
 /// Get the number of action buttons for the current app's install status.
-pub fn action_count(status: &InstallStatus, supports_embed: bool, supports_local: bool, supports_global: bool) -> usize {
+pub fn action_count(status: &InstallStatus, supports_embed: bool, supports_local: bool, supports_global: bool, is_approved: bool) -> usize {
     let run_btn = if matches!(status, InstallStatus::NotInstalled) { 0 } else { 1 };
     let mode_btn = if !matches!(status, InstallStatus::NotInstalled) && supports_embed { 1 } else { 0 };
+    let remove_btn = if !is_approved && matches!(status, InstallStatus::NotInstalled) { 1 } else { 0 };
     let base = match status {
         InstallStatus::NotInstalled => 2,  // Open Repo, Install
         InstallStatus::Global(_) => {
-            // Open Repo, Uninstall, (Install to Downloads if supported), Open Location
             if supports_local { 4 } else { 3 }
         }
         InstallStatus::Local(_) => {
             if supports_global { 4 } else { 3 }
         }
-        InstallStatus::Both(_, _) => 5,    // Open Repo, Uninstall, Set Source, Open PATH, Open Downloads
+        InstallStatus::Both(_, _) => 5,
     };
-    run_btn + base + mode_btn
+    run_btn + base + mode_btn + remove_btn
 }

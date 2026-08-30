@@ -1015,7 +1015,7 @@ fn handle_main_key(
                 ss.install_location_dialog = false;
             } else if ss.browser.active {
                 // Close browser sub-views first, then browser itself
-                use crate::app_store::awesome_ratatui::BrowserFocus;
+                use crate::app_store::awesome_ratatui_manager::BrowserFocus;
                 match ss.browser.focus {
                     BrowserFocus::Actions => {
                         ss.browser.focus = BrowserFocus::List;
@@ -1026,6 +1026,9 @@ fn handle_main_key(
                         ss.browser.focus = BrowserFocus::List;
                         ss.browser.recompute_visible();
                     }
+                    BrowserFocus::DescriptionToggle => {
+                        ss.browser.focus = BrowserFocus::List;
+                    }
                     BrowserFocus::List => {
                         ss.browser.active = false;
                         ss.browser.search_query.clear();
@@ -1033,6 +1036,8 @@ fn handle_main_key(
                 }
             } else if ss.filter_panel_open {
                 ss.filter_panel_open = false;
+                ss.focus = crate::app_store::state::AppStoreFocus::LeftPane;
+            } else if ss.focus == crate::app_store::state::AppStoreFocus::BrowserButton {
                 ss.focus = crate::app_store::state::AppStoreFocus::LeftPane;
             } else if ss.focus == crate::app_store::state::AppStoreFocus::FilterPanel {
                 ss.focus = crate::app_store::state::AppStoreFocus::LeftPane;
@@ -1470,7 +1475,7 @@ fn handle_appstore_key(
                     if ss.filter_panel_cursor > 0 {
                         ss.filter_panel_cursor -= 1;
                     } else {
-                        ss.focus = AppStoreFocus::SearchBar;
+                        ss.focus = AppStoreFocus::BrowserButton;
                     }
                 }
                 Action::Down => {
@@ -1545,8 +1550,25 @@ fn handle_appstore_key(
                     }
                 }
                 Action::Enter | Action::Down => {
+                    ss.focus = AppStoreFocus::BrowserButton;
+                }
+                _ => {}
+            }
+        }
+        AppStoreFocus::BrowserButton => {
+            match action {
+                Action::Up => {
+                    ss.focus = AppStoreFocus::SearchBar;
+                }
+                Action::Down => {
                     ss.focus = AppStoreFocus::FilterPanel;
                     ss.filter_panel_cursor = 0;
+                }
+                Action::Enter => {
+                    open_awesome_ratatui_browser(ss);
+                }
+                Action::Back => {
+                    ss.focus = AppStoreFocus::LeftPane;
                 }
                 _ => {}
             }
@@ -1598,9 +1620,14 @@ fn handle_appstore_key(
                     .and_then(|v| v.as_array())
                     .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
                     .unwrap_or_else(|| vec!["global"]);
+                let is_approved = app_meta
+                    .and_then(|m| m.get("approved"))
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(true);
                 let count = app_store::page::action_count(
                     &status, supports_embed,
                     methods.contains(&"local"), methods.contains(&"global"),
+                    is_approved,
                 );
                 match action {
                     Action::Up => {
@@ -1886,6 +1913,34 @@ fn handle_appstore_action(
             }
         }
     }
+
+    // Remove from App Store (for non-approved, not-installed apps — last button)
+    let is_approved = meta.get("approved").and_then(|v| v.as_bool()).unwrap_or(true);
+    if !is_approved && matches!(status, InstallStatus::NotInstalled) {
+        let supports_embed = app_store::actions::supports_embedded(Some(meta));
+        let rm_methods: Vec<&str> = meta.get("install_methods")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
+            .unwrap_or_else(|| vec!["global"]);
+        let remove_cursor = app_store::page::action_count(
+            &status, supports_embed,
+            rm_methods.contains(&"local"), rm_methods.contains(&"global"),
+            is_approved,
+        ) - 1;
+        if ss.right_action_cursor == remove_cursor {
+            let mut reg = registered_apps.clone();
+            if crate::app_store::awesome_ratatui_manager::remove_from_registered(&key, &mut reg) {
+                logging::info(&format!("App Store: removed '{}' (non-approved)", key));
+                state.popup = Some((
+                    format!("{} removed from App Store", key),
+                    Instant::now(),
+                ));
+                state.needs_sync = true;
+                ss.focus = crate::app_store::state::AppStoreFocus::LeftPane;
+                ss.in_right_actions = false;
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1893,20 +1948,20 @@ fn handle_appstore_action(
 // ---------------------------------------------------------------------------
 
 fn open_awesome_ratatui_browser(ss: &mut crate::app_store::state::AppStoreState) {
-    use crate::app_store::awesome_ratatui;
+    use crate::app_store::awesome_ratatui_manager;
     use crate::utilities::logging;
 
     ss.browser.active = true;
     ss.browser.loading = true;
     ss.browser.error = None;
-    ss.browser.focus = awesome_ratatui::BrowserFocus::List;
+    ss.browser.focus = awesome_ratatui_manager::BrowserFocus::List;
     ss.browser.cursor = 0;
     ss.browser.scroll = 0;
     ss.browser.action_cursor = 0;
 
-    match awesome_ratatui::load_or_fetch() {
+    match awesome_ratatui_manager::load_or_fetch() {
         Ok((apps, ts)) => {
-            let cats = awesome_ratatui::build_categories(&apps);
+            let cats = awesome_ratatui_manager::build_categories(&apps);
             ss.browser.apps = apps;
             ss.browser.categories = cats;
             ss.browser.fetched_at = Some(ts);
@@ -1930,7 +1985,7 @@ fn handle_browser_key(
     state: &mut TuixState,
     registered_apps: &std::collections::HashMap<String, Value>,
 ) {
-    use crate::app_store::awesome_ratatui::{self, BrowserFocus, RowKind};
+    use crate::app_store::awesome_ratatui_manager::{self, BrowserFocus, RowKind};
 
     let ss = &mut state.app_store;
 
@@ -1946,6 +2001,28 @@ fn handle_browser_key(
                     }
                 }
                 Action::Enter | Action::Down => {
+                    ss.browser.focus = BrowserFocus::DescriptionToggle;
+                }
+                _ => {}
+            }
+        }
+        BrowserFocus::DescriptionToggle => {
+            match action {
+                Action::Up => {
+                    ss.browser.focus = BrowserFocus::SearchBar;
+                }
+                Action::Down => {
+                    ss.browser.focus = BrowserFocus::List;
+                    ss.browser.cursor = 0;
+                    // Skip spacers
+                    while matches!(ss.browser.visible_rows.get(ss.browser.cursor), Some(RowKind::Spacer)) {
+                        ss.browser.cursor += 1;
+                    }
+                }
+                Action::Enter => {
+                    ss.browser.show_descriptions = !ss.browser.show_descriptions;
+                }
+                Action::Back => {
                     ss.browser.focus = BrowserFocus::List;
                 }
                 _ => {}
@@ -1956,18 +2033,28 @@ fn handle_browser_key(
                 Action::Up => {
                     if ss.browser.cursor > 0 {
                         ss.browser.cursor -= 1;
-                        // Auto-scroll
+                        // Skip spacers
+                        while ss.browser.cursor > 0
+                            && matches!(ss.browser.visible_rows.get(ss.browser.cursor), Some(RowKind::Spacer))
+                        {
+                            ss.browser.cursor -= 1;
+                        }
                         if ss.browser.cursor < ss.browser.scroll {
                             ss.browser.scroll = ss.browser.cursor;
                         }
                     } else {
-                        ss.browser.focus = BrowserFocus::SearchBar;
+                        ss.browser.focus = BrowserFocus::DescriptionToggle;
                     }
                 }
                 Action::Down => {
                     if ss.browser.cursor < ss.browser.visible_rows.len().saturating_sub(1) {
                         ss.browser.cursor += 1;
-                        // Auto-scroll (assume ~20 visible rows)
+                        // Skip spacers
+                        while ss.browser.cursor < ss.browser.visible_rows.len().saturating_sub(1)
+                            && matches!(ss.browser.visible_rows.get(ss.browser.cursor), Some(RowKind::Spacer))
+                        {
+                            ss.browser.cursor += 1;
+                        }
                         let visible_h = 20usize;
                         if ss.browser.cursor >= ss.browser.scroll + visible_h {
                             ss.browser.scroll = ss.browser.cursor.saturating_sub(visible_h - 1);
@@ -1989,6 +2076,7 @@ fn handle_browser_key(
                                 ss.browser.focus = BrowserFocus::Actions;
                                 ss.browser.action_cursor = 0;
                             }
+                            RowKind::Spacer => {}
                         }
                     }
                 }
@@ -2008,13 +2096,13 @@ fn handle_browser_key(
                     return;
                 }
             };
-            let key = awesome_ratatui::repo_to_key(&app.repo_url);
+            let key = awesome_ratatui_manager::repo_to_key(&app.repo_url);
             let is_reg = registered_apps.contains_key(&key);
             let is_inst = matches!(
                 ss.install_statuses.get(&key),
                 Some(s) if !matches!(s, crate::app_store::state::InstallStatus::NotInstalled)
             );
-            let max_actions = app_store::awesome_ratatui_page::browser_action_count(is_reg, is_inst);
+            let max_actions = app_store::awesome_ratatui_page::build_browser_actions(is_reg, is_inst).len();
 
             match action {
                 Action::Up => {
@@ -2044,7 +2132,7 @@ fn handle_browser_action(
     state: &mut TuixState,
     registered_apps: &std::collections::HashMap<String, Value>,
 ) {
-    use crate::app_store::awesome_ratatui;
+    use crate::app_store::awesome_ratatui_manager;
     use crate::utilities::logging;
 
     let ss = &mut state.app_store;
@@ -2052,45 +2140,85 @@ fn handle_browser_action(
         Some(a) => a,
         None => return,
     };
-    let key = awesome_ratatui::repo_to_key(&app.repo_url);
+    let key = awesome_ratatui_manager::repo_to_key(&app.repo_url);
     let is_reg = registered_apps.contains_key(&key);
     let is_inst = matches!(
         ss.install_statuses.get(&key),
         Some(s) if !matches!(s, crate::app_store::state::InstallStatus::NotInstalled)
     );
 
-    match ss.browser.action_cursor {
-        0 => {
-            // Open Repository
+    let actions = app_store::awesome_ratatui_page::build_browser_actions(is_reg, is_inst);
+    let action_label = match actions.get(ss.browser.action_cursor) {
+        Some(l) => l.clone(),
+        None => return,
+    };
+
+    match action_label.as_str() {
+        "Open Repository" => {
             if !app.repo_url.is_empty() {
                 app_store::actions::open_url(&app.repo_url);
             }
         }
-        1 => {
-            if !is_reg {
-                // Add to App Store
-                awesome_ratatui::add_to_registered(&app);
-                logging::info(&format!("Awesome Ratatui: added '{}' to app store", app.name));
+        "Add to App Store" => {
+            awesome_ratatui_manager::add_to_registered(&app);
+            logging::info(&format!("Awesome Ratatui: added '{}' to app store", app.name));
+            state.popup = Some((
+                format!("{} added to App Store", app.name),
+                std::time::Instant::now(),
+            ));
+            state.needs_sync = true;
+            ss.browser.focus = awesome_ratatui_manager::BrowserFocus::List;
+            ss.browser.action_cursor = 0;
+        }
+        "Add to App Store & Install" => {
+            awesome_ratatui_manager::add_to_registered(&app);
+            logging::info(&format!("Awesome Ratatui: added '{}' to app store, prompting install", app.name));
+            state.popup = Some((
+                format!("{} added to App Store — select install location", app.name),
+                std::time::Instant::now(),
+            ));
+            state.needs_sync = true;
+            // Open install location dialog
+            ss.browser.active = false;
+            ss.browser.search_query.clear();
+            ss.install_location_dialog = true;
+            ss.install_location_cursor = 0;
+            ss.available_install_methods = vec![
+                crate::app_store::state::InstallLocation::Global,
+                crate::app_store::state::InstallLocation::Local,
+            ];
+            // Set cursor to the newly added app
+            let added_key = awesome_ratatui_manager::repo_to_key(&app.repo_url);
+            ss.recompute_app_list(registered_apps);
+            if let Some(pos) = ss.computed_app_list.iter().position(|k| k == &added_key) {
+                ss.left_cursor = pos;
+            }
+        }
+        "Remove from App Store" => {
+            let mut reg = registered_apps.clone();
+            if awesome_ratatui_manager::remove_from_registered(&key, &mut reg) {
+                logging::info(&format!("Awesome Ratatui: removed '{}' from app store", app.name));
                 state.popup = Some((
-                    format!("{} added to App Store", app.name),
+                    format!("{} removed from App Store", app.name),
                     std::time::Instant::now(),
                 ));
                 state.needs_sync = true;
-            } else if !is_inst {
-                // Remove from App Store
-                let mut reg = registered_apps.clone();
-                if awesome_ratatui::remove_from_registered(&key, &mut reg) {
-                    logging::info(&format!("Awesome Ratatui: removed '{}' from app store", app.name));
-                    state.popup = Some((
-                        format!("{} removed from App Store", app.name),
-                        std::time::Instant::now(),
-                    ));
-                    state.needs_sync = true;
-                }
             }
-            // Go back to list after action
-            ss.browser.focus = awesome_ratatui::BrowserFocus::List;
+            ss.browser.focus = awesome_ratatui_manager::BrowserFocus::List;
             ss.browser.action_cursor = 0;
+        }
+        "Open in App Store" => {
+            // Close browser and navigate to the app in the main app store
+            let target_key = awesome_ratatui_manager::repo_to_key(&app.repo_url);
+            ss.browser.active = false;
+            ss.browser.search_query.clear();
+            ss.recompute_app_list(registered_apps);
+            if let Some(pos) = ss.computed_app_list.iter().position(|k| k == &target_key) {
+                ss.left_cursor = pos;
+            }
+            ss.focus = crate::app_store::state::AppStoreFocus::RightPane;
+            ss.in_right_actions = true;
+            ss.right_action_cursor = 0;
         }
         _ => {}
     }
@@ -2221,9 +2349,11 @@ fn run_app() -> bool {
                                 None => "unknown",
                             };
                             state.popup = Some((format!("Installed {} to {}", key, loc_label), Instant::now()));
+                            state.app_store.failed_installs.remove(key);
                         } else {
                             state.popup = Some((format!("Failed to install {}", key), Instant::now()));
                             logging::error(&format!("App Store: install failed for {}", key));
+                            state.app_store.failed_installs.insert(key.to_string());
                         }
                     } else {
                         state.popup = Some((format!("Uninstalled {}", key), Instant::now()));
@@ -2260,9 +2390,14 @@ fn run_app() -> bool {
                         .and_then(|v| v.as_array())
                         .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
                         .unwrap_or_else(|| vec!["global"]);
+                    let new_approved = new_meta
+                        .and_then(|m| m.get("approved"))
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(true);
                     let new_count = app_store::page::action_count(
                         &new_status, new_supports_embed,
                         new_methods.contains(&"local"), new_methods.contains(&"global"),
+                        new_approved,
                     );
                     if state.app_store.right_action_cursor >= new_count {
                         state.app_store.right_action_cursor = 0;
@@ -2773,7 +2908,7 @@ fn run_app() -> bool {
         if state.focus == FocusTarget::Main
             && matches!(state.active_page.as_deref(), Some("appstore"))
             && state.app_store.browser.active
-            && state.app_store.browser.focus == crate::app_store::awesome_ratatui::BrowserFocus::SearchBar
+            && state.app_store.browser.focus == crate::app_store::awesome_ratatui_manager::BrowserFocus::SearchBar
         {
             match key_event.code {
                 crossterm::event::KeyCode::Char(ch) => {
@@ -2788,15 +2923,27 @@ fn run_app() -> bool {
                 }
                 crossterm::event::KeyCode::Esc => {
                     state.app_store.browser.search_query.clear();
-                    state.app_store.browser.focus = crate::app_store::awesome_ratatui::BrowserFocus::List;
+                    state.app_store.browser.focus = crate::app_store::awesome_ratatui_manager::BrowserFocus::List;
                     state.app_store.browser.recompute_visible();
                     continue;
                 }
                 crossterm::event::KeyCode::Enter | crossterm::event::KeyCode::Down => {
-                    state.app_store.browser.focus = crate::app_store::awesome_ratatui::BrowserFocus::List;
+                    state.app_store.browser.focus = crate::app_store::awesome_ratatui_manager::BrowserFocus::List;
                     continue;
                 }
                 _ => {}
+            }
+        }
+
+        // Browser `/` shortcut to activate search when in list view
+        if state.focus == FocusTarget::Main
+            && matches!(state.active_page.as_deref(), Some("appstore"))
+            && state.app_store.browser.active
+            && state.app_store.browser.focus == crate::app_store::awesome_ratatui_manager::BrowserFocus::List
+        {
+            if let crossterm::event::KeyCode::Char('/') = key_event.code {
+                state.app_store.browser.focus = crate::app_store::awesome_ratatui_manager::BrowserFocus::SearchBar;
+                continue;
             }
         }
 
@@ -2840,10 +2987,6 @@ fn run_app() -> bool {
                 match ch {
                     '/' => {
                         state.app_store.focus = crate::app_store::state::AppStoreFocus::SearchBar;
-                        continue;
-                    }
-                    '+' => {
-                        open_awesome_ratatui_browser(&mut state.app_store);
                         continue;
                     }
                     _ => {}

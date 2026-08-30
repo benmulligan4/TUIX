@@ -33,6 +33,7 @@ struct Cache {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BrowserFocus {
     SearchBar,
+    DescriptionToggle,
     List,
     Actions,
 }
@@ -53,12 +54,14 @@ pub struct BrowserState {
     pub action_cursor: usize,
     pub loading: bool,
     pub error: Option<String>,
+    pub show_descriptions: bool,
 }
 
 #[derive(Debug, Clone)]
 pub enum RowKind {
     CategoryHeader(String),
-    App(usize), // index into BrowserState.apps
+    App(usize),
+    Spacer,
 }
 
 impl BrowserState {
@@ -77,6 +80,7 @@ impl BrowserState {
             action_cursor: 0,
             loading: false,
             error: None,
+            show_descriptions: false,
         }
     }
 
@@ -91,6 +95,7 @@ impl BrowserState {
     pub fn recompute_visible(&mut self) {
         let query = self.search_query.to_lowercase();
         let mut rows: Vec<RowKind> = Vec::new();
+        let mut has_prev_category = false;
 
         for cat in &self.categories {
             let cat_apps: Vec<usize> = self.apps.iter().enumerate()
@@ -106,6 +111,11 @@ impl BrowserState {
             if cat_apps.is_empty() {
                 continue;
             }
+
+            if has_prev_category {
+                rows.push(RowKind::Spacer);
+            }
+            has_prev_category = true;
 
             rows.push(RowKind::CategoryHeader(cat.clone()));
             if !self.collapsed.contains(cat) {
@@ -370,7 +380,8 @@ pub fn to_registered_value(app: &AwesomeApp) -> Value {
         "pre_installed": false,
         "install_methods": ["global", "local"],
         "default_window_mode": "embedded",
-        "supports_embedded": true
+        "supports_embedded": true,
+        "approved": false
     })
 }
 
