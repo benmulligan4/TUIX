@@ -122,6 +122,8 @@ pub struct AppStoreState {
     pub pending_op_key: Option<String>,
     /// Whether the pending operation is an install (true) or uninstall (false)
     pub pending_is_install: bool,
+    /// Awesome Ratatui browser state
+    pub browser: super::awesome_ratatui::BrowserState,
 }
 
 impl AppStoreState {
@@ -161,6 +163,7 @@ impl AppStoreState {
             pending_install_location: None,
             pending_op_key: None,
             pending_is_install: false,
+            browser: super::awesome_ratatui::BrowserState::new(),
         }
     }
 

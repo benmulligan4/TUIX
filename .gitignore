@@ -5,6 +5,7 @@ downloads/
 config/settings.json
 config/apps.json
 config/dashboards.json
+config/awesome-ratatui-cache.json
 .DS_Store
 
 .idea

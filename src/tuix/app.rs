@@ -1013,6 +1013,24 @@ fn handle_main_key(
                 ss.confirm_cursor = 0;
             } else if ss.install_location_dialog {
                 ss.install_location_dialog = false;
+            } else if ss.browser.active {
+                // Close browser sub-views first, then browser itself
+                use crate::app_store::awesome_ratatui::BrowserFocus;
+                match ss.browser.focus {
+                    BrowserFocus::Actions => {
+                        ss.browser.focus = BrowserFocus::List;
+                        ss.browser.action_cursor = 0;
+                    }
+                    BrowserFocus::SearchBar => {
+                        ss.browser.search_query.clear();
+                        ss.browser.focus = BrowserFocus::List;
+                        ss.browser.recompute_visible();
+                    }
+                    BrowserFocus::List => {
+                        ss.browser.active = false;
+                        ss.browser.search_query.clear();
+                    }
+                }
             } else if ss.filter_panel_open {
                 ss.filter_panel_open = false;
                 ss.focus = crate::app_store::state::AppStoreFocus::LeftPane;
@@ -1275,6 +1293,12 @@ fn handle_appstore_key(
 
     // If operation is running, block all navigation
     if ss.operation_running {
+        return;
+    }
+
+    // Awesome Ratatui browser handles its own navigation when active
+    if ss.browser.active {
+        handle_browser_key(action, state, registered_apps);
         return;
     }
 
@@ -1865,6 +1889,214 @@ fn handle_appstore_action(
 }
 
 // ---------------------------------------------------------------------------
+// Awesome Ratatui browser — open, navigate, add/remove apps
+// ---------------------------------------------------------------------------
+
+fn open_awesome_ratatui_browser(ss: &mut crate::app_store::state::AppStoreState) {
+    use crate::app_store::awesome_ratatui;
+    use crate::utilities::logging;
+
+    ss.browser.active = true;
+    ss.browser.loading = true;
+    ss.browser.error = None;
+    ss.browser.focus = awesome_ratatui::BrowserFocus::List;
+    ss.browser.cursor = 0;
+    ss.browser.scroll = 0;
+    ss.browser.action_cursor = 0;
+
+    match awesome_ratatui::load_or_fetch() {
+        Ok((apps, ts)) => {
+            let cats = awesome_ratatui::build_categories(&apps);
+            ss.browser.apps = apps;
+            ss.browser.categories = cats;
+            ss.browser.fetched_at = Some(ts);
+            ss.browser.loading = false;
+            ss.browser.recompute_visible();
+            logging::info(&format!(
+                "Awesome Ratatui browser: opened with {} apps",
+                ss.browser.apps.len()
+            ));
+        }
+        Err(e) => {
+            ss.browser.loading = false;
+            ss.browser.error = Some(e.clone());
+            logging::error(&format!("Awesome Ratatui browser: {}", e));
+        }
+    }
+}
+
+fn handle_browser_key(
+    action: Action,
+    state: &mut TuixState,
+    registered_apps: &std::collections::HashMap<String, Value>,
+) {
+    use crate::app_store::awesome_ratatui::{self, BrowserFocus, RowKind};
+
+    let ss = &mut state.app_store;
+
+    match ss.browser.focus {
+        BrowserFocus::SearchBar => {
+            match action {
+                Action::Back => {
+                    if ss.browser.search_query.is_empty() {
+                        ss.browser.focus = BrowserFocus::List;
+                    } else {
+                        ss.browser.search_query.pop();
+                        ss.browser.recompute_visible();
+                    }
+                }
+                Action::Enter | Action::Down => {
+                    ss.browser.focus = BrowserFocus::List;
+                }
+                _ => {}
+            }
+        }
+        BrowserFocus::List => {
+            match action {
+                Action::Up => {
+                    if ss.browser.cursor > 0 {
+                        ss.browser.cursor -= 1;
+                        // Auto-scroll
+                        if ss.browser.cursor < ss.browser.scroll {
+                            ss.browser.scroll = ss.browser.cursor;
+                        }
+                    } else {
+                        ss.browser.focus = BrowserFocus::SearchBar;
+                    }
+                }
+                Action::Down => {
+                    if ss.browser.cursor < ss.browser.visible_rows.len().saturating_sub(1) {
+                        ss.browser.cursor += 1;
+                        // Auto-scroll (assume ~20 visible rows)
+                        let visible_h = 20usize;
+                        if ss.browser.cursor >= ss.browser.scroll + visible_h {
+                            ss.browser.scroll = ss.browser.cursor.saturating_sub(visible_h - 1);
+                        }
+                    }
+                }
+                Action::Enter | Action::Right => {
+                    if let Some(row) = ss.browser.visible_rows.get(ss.browser.cursor).cloned() {
+                        match row {
+                            RowKind::CategoryHeader(ref cat) => {
+                                if ss.browser.collapsed.contains(cat) {
+                                    ss.browser.collapsed.remove(cat);
+                                } else {
+                                    ss.browser.collapsed.insert(cat.clone());
+                                }
+                                ss.browser.recompute_visible();
+                            }
+                            RowKind::App(_) => {
+                                ss.browser.focus = BrowserFocus::Actions;
+                                ss.browser.action_cursor = 0;
+                            }
+                        }
+                    }
+                }
+                Action::Back | Action::Left => {
+                    ss.browser.active = false;
+                    ss.browser.search_query.clear();
+                }
+                _ => {}
+            }
+        }
+        BrowserFocus::Actions => {
+            let app = ss.browser.selected_app().cloned();
+            let app = match app {
+                Some(a) => a,
+                None => {
+                    ss.browser.focus = BrowserFocus::List;
+                    return;
+                }
+            };
+            let key = awesome_ratatui::repo_to_key(&app.repo_url);
+            let is_reg = registered_apps.contains_key(&key);
+            let is_inst = matches!(
+                ss.install_statuses.get(&key),
+                Some(s) if !matches!(s, crate::app_store::state::InstallStatus::NotInstalled)
+            );
+            let max_actions = app_store::awesome_ratatui_page::browser_action_count(is_reg, is_inst);
+
+            match action {
+                Action::Up => {
+                    if ss.browser.action_cursor > 0 {
+                        ss.browser.action_cursor -= 1;
+                    }
+                }
+                Action::Down => {
+                    if ss.browser.action_cursor < max_actions.saturating_sub(1) {
+                        ss.browser.action_cursor += 1;
+                    }
+                }
+                Action::Enter => {
+                    handle_browser_action(state, registered_apps);
+                }
+                Action::Back | Action::Left => {
+                    ss.browser.focus = BrowserFocus::List;
+                    ss.browser.action_cursor = 0;
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+fn handle_browser_action(
+    state: &mut TuixState,
+    registered_apps: &std::collections::HashMap<String, Value>,
+) {
+    use crate::app_store::awesome_ratatui;
+    use crate::utilities::logging;
+
+    let ss = &mut state.app_store;
+    let app = match ss.browser.selected_app().cloned() {
+        Some(a) => a,
+        None => return,
+    };
+    let key = awesome_ratatui::repo_to_key(&app.repo_url);
+    let is_reg = registered_apps.contains_key(&key);
+    let is_inst = matches!(
+        ss.install_statuses.get(&key),
+        Some(s) if !matches!(s, crate::app_store::state::InstallStatus::NotInstalled)
+    );
+
+    match ss.browser.action_cursor {
+        0 => {
+            // Open Repository
+            if !app.repo_url.is_empty() {
+                app_store::actions::open_url(&app.repo_url);
+            }
+        }
+        1 => {
+            if !is_reg {
+                // Add to App Store
+                awesome_ratatui::add_to_registered(&app);
+                logging::info(&format!("Awesome Ratatui: added '{}' to app store", app.name));
+                state.popup = Some((
+                    format!("{} added to App Store", app.name),
+                    std::time::Instant::now(),
+                ));
+                state.needs_sync = true;
+            } else if !is_inst {
+                // Remove from App Store
+                let mut reg = registered_apps.clone();
+                if awesome_ratatui::remove_from_registered(&key, &mut reg) {
+                    logging::info(&format!("Awesome Ratatui: removed '{}' from app store", app.name));
+                    state.popup = Some((
+                        format!("{} removed from App Store", app.name),
+                        std::time::Instant::now(),
+                    ));
+                    state.needs_sync = true;
+                }
+            }
+            // Go back to list after action
+            ss.browser.focus = awesome_ratatui::BrowserFocus::List;
+            ss.browser.action_cursor = 0;
+        }
+        _ => {}
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Restart is handled by returning from the main loop and re-entering it.
 // No exec or spawn needed — clean terminal restore between cycles.
 // ---------------------------------------------------------------------------
@@ -1901,7 +2133,7 @@ fn run_app() -> bool {
     logging::info("TUIX started");
 
     let settings_map = registry::load_settings();
-    let registered_apps = registry::load_registered_apps();
+    let mut registered_apps = registry::load_registered_apps();
 
     // Sync config files with actual installs on disk/PATH before loading
     app_store::actions::sync_installed_apps(&registered_apps);
@@ -2053,6 +2285,7 @@ fn run_app() -> bool {
             let show_popup = matches!(state.active_page.as_deref(), Some("appstore"))
                 && state.app_store.focus == crate::app_store::state::AppStoreFocus::FilterPanel;
             state.needs_sync = false;
+            registered_apps = registry::load_registered_apps();
             let changed = app_store::actions::sync_installed_apps(&registered_apps);
             state.app_store.install_statuses = app_store::actions::refresh_all_statuses(&registered_apps);
             state.app_store.recompute_app_list(&registered_apps);
@@ -2536,6 +2769,37 @@ fn run_app() -> bool {
             }
         }
 
+        // When Awesome Ratatui browser search bar is focused, capture character input
+        if state.focus == FocusTarget::Main
+            && matches!(state.active_page.as_deref(), Some("appstore"))
+            && state.app_store.browser.active
+            && state.app_store.browser.focus == crate::app_store::awesome_ratatui::BrowserFocus::SearchBar
+        {
+            match key_event.code {
+                crossterm::event::KeyCode::Char(ch) => {
+                    state.app_store.browser.search_query.push(ch);
+                    state.app_store.browser.recompute_visible();
+                    continue;
+                }
+                crossterm::event::KeyCode::Backspace => {
+                    state.app_store.browser.search_query.pop();
+                    state.app_store.browser.recompute_visible();
+                    continue;
+                }
+                crossterm::event::KeyCode::Esc => {
+                    state.app_store.browser.search_query.clear();
+                    state.app_store.browser.focus = crate::app_store::awesome_ratatui::BrowserFocus::List;
+                    state.app_store.browser.recompute_visible();
+                    continue;
+                }
+                crossterm::event::KeyCode::Enter | crossterm::event::KeyCode::Down => {
+                    state.app_store.browser.focus = crate::app_store::awesome_ratatui::BrowserFocus::List;
+                    continue;
+                }
+                _ => {}
+            }
+        }
+
         // When App Store search bar is focused, capture character input
         if state.focus == FocusTarget::Main
             && matches!(state.active_page.as_deref(), Some("appstore"))
@@ -2576,6 +2840,10 @@ fn run_app() -> bool {
                 match ch {
                     '/' => {
                         state.app_store.focus = crate::app_store::state::AppStoreFocus::SearchBar;
+                        continue;
+                    }
+                    '+' => {
+                        open_awesome_ratatui_browser(&mut state.app_store);
                         continue;
                     }
                     _ => {}

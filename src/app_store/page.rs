@@ -50,8 +50,12 @@ pub fn render(
 
     render_left_pane(frame, left_area, state, registered);
 
-    // If terminal visible, split right pane into preview + terminal
-    if state.terminal_visible {
+    // If browser is active, render it in the right pane
+    if state.browser.active {
+        super::awesome_ratatui_page::render_browser(
+            frame, full_right_area, &state.browser, registered, &state.install_statuses,
+        );
+    } else if state.terminal_visible {
         let right_sections = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
@@ -104,6 +108,20 @@ fn render_left_pane(
         format!(" [/] {}", state.search_query)
     };
     lines.push(Line::from(Span::styled(search_text, search_style)));
+
+    // Awesome Ratatui browser button
+    let browser_active = state.browser.active;
+    let browser_style = if browser_active {
+        Style::default().fg(Color::Black).bg(Color::Green)
+    } else if in_left {
+        Style::default().fg(Color::Green)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+    lines.push(Line::from(Span::styled(
+        if browser_active { " ✚ Awesome Ratatui  [open]" } else { " ✚ Awesome Ratatui" },
+        browser_style,
+    )));
 
     // Filter panel toggle
     let panel_focused = state.focus == AppStoreFocus::FilterPanel;
@@ -760,7 +778,7 @@ fn render_install_location_dialog(frame: &mut Frame, area: Rect, state: &AppStor
 }
 
 /// Simple word-wrap helper.
-fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
+pub fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
     if max_width == 0 {
         return vec![text.to_string()];
     }
