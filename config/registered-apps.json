@@ -26,8 +26,8 @@
     "cmd": ["chess-tui"],
     "pre_installed": false,
     "install_methods": ["global", "local"],
-    "default_window_mode": "fullscreen",
-    "supports_embedded": false
+    "default_window_mode": "embedded",
+    "supports_embedded": true
   },
   "wordl": {
     "label": "Wordl — Terminal Wordle",

@@ -3,6 +3,8 @@ logs/
 tuix.log
 downloads/
 config/settings.json
+config/apps.json
+config/dashboards.json
 .DS_Store
 
 .idea

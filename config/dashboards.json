@@ -8,12 +8,5 @@
     "label": "Dashboard 2 — System Stats",
     "type": "internal",
     "module": "dashboards::dashboard_2"
-  },
-  "sigye": {
-    "label": "Sigye — Terminal Clock",
-    "type": "installed",
-    "source": "global",
-    "repository": "https://github.com/am2rican5/sigye",
-    "cmd": ["sigye"]
   }
 }
