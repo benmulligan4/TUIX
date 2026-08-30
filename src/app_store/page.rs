@@ -122,7 +122,7 @@ fn render_left_pane(
         Style::default().fg(Color::DarkGray)
     };
     lines.push(Line::from(Span::styled(
-        if browser_active { " ✚ Browse Awesome Ratatui  [open]" } else { " ✚ Browse Awesome Ratatui" },
+        " ✚ Browse Awesome Ratatui",
         browser_style,
     )));
 

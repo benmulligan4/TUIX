@@ -80,7 +80,7 @@ impl BrowserState {
             action_cursor: 0,
             loading: false,
             error: None,
-            show_descriptions: false,
+            show_descriptions: true,
         }
     }
 

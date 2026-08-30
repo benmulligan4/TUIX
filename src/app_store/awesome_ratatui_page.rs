@@ -208,22 +208,28 @@ fn render_app_list(
                     Style::default().fg(color)
                 };
 
-                let name_line = format!("{}{}{}", prefix, app.name, suffix);
-                lines.push(Line::from(Span::styled(name_line, style)));
-
                 if browser.show_descriptions && !app.description.is_empty() {
                     let desc_style = if is_cursor {
                         Style::default().fg(Color::Black).bg(Color::Cyan)
                     } else {
                         Style::default().fg(Color::DarkGray)
                     };
-                    let max_w = area.width.saturating_sub(6) as usize;
-                    let truncated = if app.description.len() > max_w {
-                        format!("     {}...", &app.description[..max_w.saturating_sub(3)])
+                    let max_w = area.width.saturating_sub(4) as usize;
+                    let name_part = format!("{}{}{}", prefix, app.name, suffix);
+                    let sep = " - ";
+                    let remaining = max_w.saturating_sub(name_part.len() + sep.len());
+                    let desc_text = if app.description.len() > remaining && remaining > 3 {
+                        format!("{}...", &app.description[..remaining.saturating_sub(3)])
                     } else {
-                        format!("     {}", app.description)
+                        app.description.clone()
                     };
-                    lines.push(Line::from(Span::styled(truncated, desc_style)));
+                    lines.push(Line::from(vec![
+                        Span::styled(name_part, style),
+                        Span::styled(format!("{}{}", sep, desc_text), desc_style),
+                    ]));
+                } else {
+                    let name_line = format!("{}{}{}", prefix, app.name, suffix);
+                    lines.push(Line::from(Span::styled(name_line, style)));
                 }
             }
         }
