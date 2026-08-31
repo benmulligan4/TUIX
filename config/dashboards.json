@@ -1,12 +1,12 @@
 {
   "Dashboard-1": {
     "label": "Dashboard 1 — Clock & Date",
-    "type": "internal",
-    "module": "dashboards::dashboard_1"
+    "module": "dashboards::dashboard_1",
+    "type": "internal"
   },
   "Dashboard-2": {
     "label": "Dashboard 2 — System Stats",
-    "type": "internal",
-    "module": "dashboards::dashboard_2"
+    "module": "dashboards::dashboard_2",
+    "type": "internal"
   }
 }

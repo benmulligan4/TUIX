@@ -1,17 +1,17 @@
 {
+  "TextEditor": {
+    "label": "Text Editor",
+    "module": "applications::text_editor",
+    "type": "internal"
+  },
   "CharacterSet": {
     "label": "Character Set",
-    "type": "internal",
-    "module": "applications::character_set"
+    "module": "applications::character_set",
+    "type": "internal"
   },
   "FileExplorer": {
     "label": "File Explorer",
-    "type": "internal",
-    "module": "applications::file_explorer"
-  },
-  "TextEditor": {
-    "label": "Text Editor",
-    "type": "internal",
-    "module": "applications::text_editor"
+    "module": "applications::file_explorer",
+    "type": "internal"
   }
 }
