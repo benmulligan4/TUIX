@@ -1,50 +1,85 @@
 {
-  "sigye": {
-    "label": "Sigye — Terminal Clock",
-    "description": "A feature-rich terminal clock with ASCII art fonts, animated backgrounds, and productivity timers. 6 display modes including Clock, Pomodoro, Timer, Stopwatch, World Clock, and Countdown. 40+ bundled FIGlet fonts, 18 color themes, 21 animated backgrounds, and desktop notifications.",
-    "category": "Dashboard",
-    "author": "am2rican5",
-    "version": "0.6.0",
-    "license": "MIT",
-    "repository": "https://github.com/am2rican5/sigye",
-    "crate_name": "sigye",
-    "cmd": ["sigye"],
-    "pre_installed": true,
-    "install_methods": ["global", "local"],
-    "default_window_mode": "embedded",
-    "supports_embedded": true,
-    "approved": true
-  },
   "chess-tui": {
-    "label": "Chess TUI",
-    "description": "A free, open-source terminal chess game. Play with a friend locally, against any UCI chess engine (e.g. Stockfish), or online via Lichess. Features local 2-player mode, engine integration, Lichess multiplayer, helper menu, and custom skins. Runs on macOS, Linux, and Windows.",
-    "category": "Games",
+    "approved": true,
     "author": "thomas-mauran",
-    "version": "2.7.1",
-    "license": "MIT",
-    "repository": "https://github.com/thomas-mauran/chess-tui",
-    "crate_name": "chess-tui",
-    "cmd": ["chess-tui"],
-    "pre_installed": false,
-    "install_methods": ["global", "local"],
-    "default_window_mode": "embedded",
-    "supports_embedded": true,
-    "approved": true
-  },
-  "wordl": {
-    "label": "Wordl — Terminal Wordle",
-    "description": "Terminal Wordle with web-like GUI experience. Features keyboard hints, slow reveal letter color animations, and a clean interface. Type your guess and press Enter, use Backspace to clear, Ctrl-N for a new game, Esc to quit. Built with Ratatui.",
     "category": "Games",
-    "author": "palerdot",
-    "version": "0.3.0",
-    "license": "GPL-3.0",
-    "repository": "https://github.com/palerdot/wordl-rs",
-    "crate_name": "wordl",
-    "cmd": ["wordl"],
-    "pre_installed": false,
-    "install_methods": ["global"],
+    "cmd": [
+      "chess-tui"
+    ],
+    "crate_name": "chess-tui",
     "default_window_mode": "embedded",
+    "description": "Terminal-based Chess game.",
+    "install_methods": [
+      "global",
+      "local"
+    ],
+    "label": "Chess-tui",
+    "license": "unknown",
+    "pre_installed": false,
+    "repository": "https://github.com/thomas-mauran/chess-tui",
     "supports_embedded": true,
-    "approved": true
+    "version": "unknown"
+  },
+  "wordl-rs": {
+    "approved": true,
+    "author": "palerdot",
+    "category": "Games",
+    "cmd": [
+      "wordl-rs"
+    ],
+    "crate_name": "wordl-rs",
+    "default_window_mode": "embedded",
+    "description": "Terminal-based Wordle game. Web like experience with keyboard hints and guess reveal animations.",
+    "install_methods": [
+      "global",
+      "local"
+    ],
+    "label": "wordl",
+    "license": "unknown",
+    "pre_installed": false,
+    "repository": "https://github.com/palerdot/wordl-rs",
+    "supports_embedded": true,
+    "version": "unknown"
+  },
+  "sigye": {
+    "approved": true,
+    "author": "am2rican5",
+    "category": "Dashboards",
+    "cmd": [
+      "sigye"
+    ],
+    "crate_name": "sigye",
+    "default_window_mode": "embedded",
+    "description": "A terminal clock with FIGlet fonts, customizable themes, and animated backgrounds.",
+    "install_methods": [
+      "global",
+      "local"
+    ],
+    "label": "sigye",
+    "license": "unknown",
+    "pre_installed": false,
+    "repository": "https://github.com/am2rican5/sigye",
+    "supports_embedded": true,
+    "version": "unknown"
+  },
+  "sxtetris": {
+    "approved": true,
+    "author": "shixinhuang99",
+    "category": "Games",
+    "cmd": [
+      "sxtetris"
+    ],
+    "crate_name": "sxtetris",
+    "default_window_mode": "embedded",
+    "description": "A terminal Tetris game.",
+    "install_methods": [
+      "global"
+    ],
+    "label": "sxtetris",
+    "license": "unknown",
+    "pre_installed": false,
+    "repository": "https://github.com/shixinhuang99/sxtetris",
+    "supports_embedded": true,
+    "version": "unknown"
   }
 }
