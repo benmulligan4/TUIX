@@ -81,6 +81,13 @@ pub enum AppStoreFocus {
 }
 
 #[derive(Debug, Clone)]
+pub enum LeftRowKind {
+    CategoryHeader(String),
+    App(String),
+    Spacer,
+}
+
+#[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct AppStoreState {
     pub focus: AppStoreFocus,
@@ -108,6 +115,8 @@ pub struct AppStoreState {
     pub install_location_cursor: usize,
     pub available_install_methods: Vec<InstallLocation>,
     pub computed_app_list: Vec<String>,
+    pub left_visible_rows: Vec<LeftRowKind>,
+    pub collapsed_store_categories: HashSet<String>,
     pub install_statuses: HashMap<String, InstallStatus>,
     pub right_action_cursor: usize,
     pub in_right_actions: bool,
@@ -156,6 +165,8 @@ impl AppStoreState {
             install_location_cursor: 0,
             available_install_methods: Vec::new(),
             computed_app_list: Vec::new(),
+            left_visible_rows: Vec::new(),
+            collapsed_store_categories: HashSet::new(),
             install_statuses: HashMap::new(),
             right_action_cursor: 0,
             in_right_actions: false,
@@ -168,10 +179,6 @@ impl AppStoreState {
             failed_installs: HashSet::new(),
             browser: super::awesome_ratatui_manager::BrowserState::new(),
         }
-    }
-
-    pub fn selected_app_key(&self) -> Option<&String> {
-        self.computed_app_list.get(self.left_cursor)
     }
 
     /// Get the cursor index for the refresh button (always after panel items).
@@ -321,11 +328,48 @@ impl AppStoreState {
 
         self.computed_app_list = keys;
 
+        // Build visible rows with category headers when sorting by category
+        self.left_visible_rows.clear();
+        if self.sort_mode == SortMode::Category {
+            let mut current_cat = String::new();
+            let mut has_prev = false;
+            for key in &self.computed_app_list {
+                let cat = registered.get(key.as_str())
+                    .and_then(|m| m.get("category"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Other")
+                    .to_string();
+                if cat != current_cat {
+                    if has_prev && !self.collapsed_store_categories.contains(&current_cat) {
+                        self.left_visible_rows.push(LeftRowKind::Spacer);
+                    }
+                    has_prev = true;
+                    current_cat = cat.clone();
+                    self.left_visible_rows.push(LeftRowKind::CategoryHeader(cat.clone()));
+                }
+                if !self.collapsed_store_categories.contains(&current_cat) {
+                    self.left_visible_rows.push(LeftRowKind::App(key.clone()));
+                }
+            }
+        } else {
+            for key in &self.computed_app_list {
+                self.left_visible_rows.push(LeftRowKind::App(key.clone()));
+            }
+        }
+
         // Clamp cursor
-        if !self.computed_app_list.is_empty() {
-            self.left_cursor = self.left_cursor.min(self.computed_app_list.len() - 1);
+        if !self.left_visible_rows.is_empty() {
+            self.left_cursor = self.left_cursor.min(self.left_visible_rows.len() - 1);
         } else {
             self.left_cursor = 0;
+        }
+    }
+
+    /// Get the app key at the current left cursor position.
+    pub fn selected_app_key(&self) -> Option<&String> {
+        match self.left_visible_rows.get(self.left_cursor) {
+            Some(LeftRowKind::App(key)) => Some(key),
+            _ => None,
         }
     }
 

@@ -1574,10 +1574,17 @@ fn handle_appstore_key(
             }
         }
         AppStoreFocus::LeftPane => {
+            use crate::app_store::state::LeftRowKind;
             match action {
                 Action::Up => {
                     if ss.left_cursor > 0 {
                         ss.left_cursor -= 1;
+                        // Skip spacers
+                        while ss.left_cursor > 0
+                            && matches!(ss.left_visible_rows.get(ss.left_cursor), Some(LeftRowKind::Spacer))
+                        {
+                            ss.left_cursor -= 1;
+                        }
                         ss.reset_right_pane();
                     } else {
                         ss.focus = AppStoreFocus::FilterPanel;
@@ -1585,16 +1592,34 @@ fn handle_appstore_key(
                     }
                 }
                 Action::Down => {
-                    if ss.left_cursor < ss.computed_app_list.len().saturating_sub(1) {
+                    if ss.left_cursor < ss.left_visible_rows.len().saturating_sub(1) {
                         ss.left_cursor += 1;
+                        // Skip spacers
+                        while ss.left_cursor < ss.left_visible_rows.len().saturating_sub(1)
+                            && matches!(ss.left_visible_rows.get(ss.left_cursor), Some(LeftRowKind::Spacer))
+                        {
+                            ss.left_cursor += 1;
+                        }
                         ss.reset_right_pane();
                     }
                 }
                 Action::Enter | Action::Right => {
-                    if !ss.computed_app_list.is_empty() {
-                        ss.focus = AppStoreFocus::RightPane;
-                        ss.in_right_actions = true;
-                        ss.right_action_cursor = 0;
+                    match ss.left_visible_rows.get(ss.left_cursor) {
+                        Some(LeftRowKind::CategoryHeader(cat)) => {
+                            let cat = cat.clone();
+                            if ss.collapsed_store_categories.contains(&cat) {
+                                ss.collapsed_store_categories.remove(&cat);
+                            } else {
+                                ss.collapsed_store_categories.insert(cat);
+                            }
+                            ss.recompute_app_list(registered_apps);
+                        }
+                        Some(LeftRowKind::App(_)) => {
+                            ss.focus = AppStoreFocus::RightPane;
+                            ss.in_right_actions = true;
+                            ss.right_action_cursor = 0;
+                        }
+                        _ => {}
                     }
                 }
                 Action::Back => {

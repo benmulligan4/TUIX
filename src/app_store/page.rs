@@ -224,49 +224,71 @@ fn render_left_pane(
     // App list
     let available_rows = area.height as usize;
 
-    for (i, key) in state.computed_app_list.iter().enumerate() {
+    use super::state::LeftRowKind;
+    for (i, row) in state.left_visible_rows.iter().enumerate() {
         if lines.len() >= available_rows {
             break;
         }
 
-        let meta = match registered.get(key.as_str()) {
-            Some(m) => m,
-            None => continue,
-        };
-        let label = meta.get("label").and_then(|v| v.as_str()).unwrap_or(key);
         let is_selected = i == state.left_cursor;
         let in_app_list = state.focus == AppStoreFocus::LeftPane;
 
-        let installed_indicator = match state.install_statuses.get(key.as_str()) {
-            Some(InstallStatus::NotInstalled) | None => " ",
-            _ => "✓",
-        };
+        match row {
+            LeftRowKind::Spacer => {
+                lines.push(Line::from(""));
+            }
+            LeftRowKind::CategoryHeader(cat) => {
+                let collapsed = state.collapsed_store_categories.contains(cat);
+                let arrow = if collapsed { "▶" } else { "▼" };
+                let cat_style = if is_selected && in_app_list {
+                    Style::default().fg(Color::Black).bg(Color::Yellow)
+                } else {
+                    Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+                };
+                lines.push(Line::from(Span::styled(
+                    format!(" {} {}", arrow, cat),
+                    cat_style,
+                )));
+            }
+            LeftRowKind::App(key) => {
+                let meta = match registered.get(key.as_str()) {
+                    Some(m) => m,
+                    None => continue,
+                };
+                let label = meta.get("label").and_then(|v| v.as_str()).unwrap_or(key);
 
-        let prefix = if is_selected && in_app_list { " » " } else { "   " };
-        let text = format!("{}{} {}", prefix, installed_indicator, label);
+                let installed_indicator = match state.install_statuses.get(key.as_str()) {
+                    Some(InstallStatus::NotInstalled) | None => " ",
+                    _ => "✓",
+                };
 
-        let is_installed = matches!(
-            state.install_statuses.get(key.as_str()),
-            Some(s) if !matches!(s, InstallStatus::NotInstalled)
-        );
-        let is_failed = state.failed_installs.contains(key);
+                let prefix = if is_selected && in_app_list { " » " } else { "   " };
+                let text = format!("{}{} {}", prefix, installed_indicator, label);
 
-        let style = if is_selected && in_app_list {
-            Style::default().fg(Color::Black).bg(Color::Cyan)
-        } else if is_failed {
-            Style::default().fg(Color::Red)
-        } else if is_installed {
-            Style::default().fg(Color::Green)
-        } else if is_selected {
-            Style::default().fg(Color::Cyan)
-        } else {
-            Style::default().fg(Color::White)
-        };
+                let is_installed = matches!(
+                    state.install_statuses.get(key.as_str()),
+                    Some(s) if !matches!(s, InstallStatus::NotInstalled)
+                );
+                let is_failed = state.failed_installs.contains(key);
 
-        lines.push(Line::from(Span::styled(text, style)));
+                let style = if is_selected && in_app_list {
+                    Style::default().fg(Color::Black).bg(Color::Cyan)
+                } else if is_failed {
+                    Style::default().fg(Color::Red)
+                } else if is_installed {
+                    Style::default().fg(Color::Green)
+                } else if is_selected {
+                    Style::default().fg(Color::Cyan)
+                } else {
+                    Style::default().fg(Color::White)
+                };
+
+                lines.push(Line::from(Span::styled(text, style)));
+            }
+        }
     }
 
-    if state.computed_app_list.is_empty() && lines.len() < available_rows {
+    if state.left_visible_rows.is_empty() && lines.len() < available_rows {
         lines.push(Line::from(Span::styled(
             "   No apps match filters",
             Style::default().fg(Color::DarkGray),
