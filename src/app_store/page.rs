@@ -646,11 +646,11 @@ fn render_terminal_panel(frame: &mut Frame, area: Rect, state: &AppStoreState) {
     };
 
     let title = if state.operation_running {
-        " Terminal Output  [UI Locked — operation in progress] "
+        " Terminal Output  [Shift+Tab to scroll] [operation in progress] "
     } else if state.terminal_focused {
-        " Terminal Output  [Shift+Tab to exit] [Q to close] "
+        " Terminal Output  [Q to exit] [Shift+C to close] "
     } else if !state.terminal_output.is_empty() {
-        " Terminal Output  [Shift+Tab to enter] [Q to close] "
+        " Terminal Output  [Shift+Tab to enter] [Shift+C to close] "
     } else {
         " Terminal Output  [Shift+Tab to enter] "
     };

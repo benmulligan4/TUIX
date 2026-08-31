@@ -2672,6 +2672,21 @@ fn run_app() -> bool {
             continue;
         }
 
+        // ---- Intercept: Shift+C to close App Store terminal ----
+        if state.focus == FocusTarget::Main
+            && matches!(state.active_page.as_deref(), Some("appstore"))
+            && state.app_store.terminal_visible
+            && !state.app_store.operation_running
+            && matches!(key_event.code, crossterm::event::KeyCode::Char('C'))
+            && key_event.modifiers.contains(crossterm::event::KeyModifiers::SHIFT)
+        {
+            state.app_store.terminal_visible = false;
+            state.app_store.terminal_focused = false;
+            state.app_store.terminal_output.clear();
+            state.app_store.terminal_scroll = 0;
+            continue;
+        }
+
         // When terminal output is focused, Up/Down/W/S scroll it
         if state.settings.terminal_focused
             && state.focus == FocusTarget::Main
@@ -2712,6 +2727,10 @@ fn run_app() -> bool {
                     }
                 }
                 crossterm::event::KeyCode::Char('q') | crossterm::event::KeyCode::Char('Q') => {
+                    // Return to preview pane, don't close terminal
+                    state.app_store.terminal_focused = false;
+                }
+                crossterm::event::KeyCode::Char('C') if key_event.modifiers.contains(crossterm::event::KeyModifiers::SHIFT) => {
                     if !state.app_store.operation_running {
                         state.app_store.terminal_visible = false;
                         state.app_store.terminal_focused = false;
@@ -2721,21 +2740,6 @@ fn run_app() -> bool {
                 }
                 _ => {}
             }
-            continue;
-        }
-
-        // Allow Q to close terminal even when not focused (from right pane)
-        if state.focus == FocusTarget::Main
-            && matches!(state.active_page.as_deref(), Some("appstore"))
-            && state.app_store.terminal_visible
-            && !state.app_store.operation_running
-            && matches!(key_event.code, crossterm::event::KeyCode::Char('q') | crossterm::event::KeyCode::Char('Q'))
-            && state.app_store.focus == crate::app_store::state::AppStoreFocus::RightPane
-        {
-            state.app_store.terminal_visible = false;
-            state.app_store.terminal_focused = false;
-            state.app_store.terminal_output.clear();
-            state.app_store.terminal_scroll = 0;
             continue;
         }
 
