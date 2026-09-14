@@ -41,12 +41,14 @@ impl SortMode {
 pub enum InstallLocation {
     Global,
     Local,
+    Git,
 }
 
 impl InstallLocation {
     pub fn label(&self) -> &'static str {
         match self {
             InstallLocation::Global => "PATH (cargo install)",
+            InstallLocation::Git => "PATH from Git (cargo install --git)",
             InstallLocation::Local => "Downloads (git clone + build)",
         }
     }
@@ -132,6 +134,10 @@ pub struct AppStoreState {
     pub pending_op_key: Option<String>,
     /// Whether the pending operation is an install (true) or uninstall (false)
     pub pending_is_install: bool,
+    /// App queued for installation from the browser, independent of the left-pane cursor
+    pub pending_install_key: Option<String>,
+    /// Cargo bin directory contents captured before the running install started
+    pub pre_install_bins: HashSet<String>,
     pub failed_installs: HashSet<String>,
     /// Awesome Ratatui browser state
     pub browser: super::awesome_ratatui_manager::BrowserState,
@@ -176,6 +182,8 @@ impl AppStoreState {
             pending_install_location: None,
             pending_op_key: None,
             pending_is_install: false,
+            pending_install_key: None,
+            pre_install_bins: HashSet::new(),
             failed_installs: HashSet::new(),
             browser: super::awesome_ratatui_manager::BrowserState::new(),
         }
@@ -231,6 +239,11 @@ impl AppStoreState {
         self.pending_op_key = Some(key);
         self.pending_is_install = is_install;
         self.pending_install_location = location;
+        self.pre_install_bins = if is_install {
+            super::actions::snapshot_cargo_bin()
+        } else {
+            HashSet::new()
+        };
         self.thread_output = Arc::new(Mutex::new(Vec::new()));
         self.thread_done = Arc::new(AtomicBool::new(false));
         self.thread_success = Arc::new(AtomicBool::new(false));

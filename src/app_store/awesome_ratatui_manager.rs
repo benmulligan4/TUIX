@@ -55,6 +55,8 @@ pub struct BrowserState {
     pub loading: bool,
     pub error: Option<String>,
     pub show_descriptions: bool,
+    /// Lazily populated install status per repo key, for apps that are not registered.
+    pub probe_cache: HashMap<String, super::state::InstallStatus>,
 }
 
 #[derive(Debug, Clone)]
@@ -81,6 +83,7 @@ impl BrowserState {
             loading: false,
             error: None,
             show_descriptions: true,
+            probe_cache: HashMap::new(),
         }
     }
 
@@ -90,6 +93,32 @@ impl BrowserState {
         } else {
             None
         }
+    }
+
+    /// Look up the install status of a browser app, preferring the registered-app
+    /// statuses and falling back to the lazily filled probe cache.
+    pub fn status_for<'a>(
+        &'a self,
+        key: &str,
+        registered_statuses: &'a HashMap<String, super::state::InstallStatus>,
+    ) -> Option<&'a super::state::InstallStatus> {
+        registered_statuses
+            .get(key)
+            .filter(|s| !matches!(s, super::state::InstallStatus::NotInstalled))
+            .or_else(|| self.probe_cache.get(key))
+    }
+
+    /// Probe the highlighted app for an existing PATH/downloads install.
+    /// Results are cached per key so scrolling stays responsive.
+    pub fn probe_selected(&mut self) {
+        let Some(app) = self.selected_app() else { return };
+        let key = repo_to_key(&app.repo_url);
+        if self.probe_cache.contains_key(&key) {
+            return;
+        }
+        let name = app.name.clone();
+        let status = super::actions::probe_install_status(&key, &name);
+        self.probe_cache.insert(key, status);
     }
 
     pub fn recompute_visible(&mut self) {

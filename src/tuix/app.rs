@@ -793,40 +793,15 @@ fn execute_action(
         if let Some(meta) = dashboards_registry.get(name) {
             let dash_type = meta.get("type").and_then(|t| t.as_str()).unwrap_or("");
             if dash_type == "installed" {
-                let source = meta.get("source").and_then(|s| s.as_str()).unwrap_or("global");
-
-                // Determine the command to run based on run source preference
-                let crate_name = meta.get("cmd")
-                    .and_then(|c| c.as_array())
-                    .and_then(|arr| arr.first())
-                    .and_then(|v| v.as_str())
-                    .unwrap_or(name);
-                let has_global = app_store::actions::detect_global_install(crate_name).is_some();
-                let has_local = app_store::actions::detect_local_install(name, "Dashboard").is_some();
-
-                let cmd: Vec<String> = if has_global && has_local {
-                    let preferred = app_store::actions::get_run_source(name);
-                    if preferred == "local" {
-                        logging::info(&format!("Running dashboard {} from Downloads source", name));
-                        vec![format!("downloads/dashboards/{}/target/release/{}", name, crate_name)]
-                    } else {
-                        logging::info(&format!("Running dashboard {} from PATH source", name));
-                        vec![crate_name.to_string()]
-                    }
-                } else if source == "local" {
-                    let local_bin = format!("downloads/dashboards/{}/target/release/{}", name, crate_name);
-                    if std::path::Path::new(&local_bin).exists() {
-                        vec![local_bin]
-                    } else {
-                        logging::error(&format!("Local binary not found for dashboard {}", name));
-                        vec![]
-                    }
-                } else {
-                    meta.get("cmd")
-                        .and_then(|c| c.as_array())
-                        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
-                        .unwrap_or_default()
-                };
+                let cmd = app_store::actions::resolve_launch_cmd(
+                    name,
+                    "Dashboard",
+                    registered_apps.get(name),
+                    Some(meta),
+                );
+                if cmd.is_empty() {
+                    logging::error(&format!("No runnable binary found for dashboard {}", name));
+                }
 
                 if window_mode == "fullscreen" && !cmd.is_empty() {
                     logging::info(&format!("Launching dashboard {} in fullscreen mode", name));
@@ -892,32 +867,19 @@ fn execute_action(
             state.focus = FocusTarget::Main;
             return NavResult::ActivateInternalApp;
         } else {
-            // Check if installed in both PATH and Downloads
-            let cmd: Vec<String> = meta
-                .and_then(|m| m.get("cmd"))
-                .and_then(|c| c.as_array())
-                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
-                .unwrap_or_default();
+            let category = registered_apps
+                .get(name)
+                .and_then(|m| m.get("category"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("Other");
+            let launch_cmd = app_store::actions::resolve_launch_cmd(
+                name,
+                category,
+                registered_apps.get(name),
+                meta,
+            );
 
-            // Check if the app also exists in the other location
-            let crate_name = cmd.first().map(|s| s.as_str()).unwrap_or(name);
-            let has_global = app_store::actions::detect_global_install(crate_name).is_some();
-            let category = meta.and_then(|m| m.get("category")).and_then(|v| v.as_str()).unwrap_or("Other");
-            let has_local = app_store::actions::detect_local_install(name, category).is_some();
-
-            if has_global && has_local {
-                // Use saved run source preference (default: global/PATH)
-                let preferred = app_store::actions::get_run_source(name);
-                let local_subdir = if category == "Dashboard" { "dashboards" } else { "applications" };
-                let local_bin = format!("downloads/{}/{}/target/release/{}", local_subdir, name, crate_name);
-                let launch_cmd = if preferred == "local" {
-                    logging::info(&format!("Running {} from Downloads source", name));
-                    vec![local_bin]
-                } else {
-                    logging::info(&format!("Running {} from PATH source", name));
-                    vec![crate_name.to_string()]
-                };
-
+            if !launch_cmd.is_empty() {
                 let window_mode = app_store::actions::get_window_mode(name, registered_apps.get(name));
                 if window_mode == "fullscreen" {
                     logging::info(&format!("Launching {} in fullscreen mode", name));
@@ -930,18 +892,8 @@ fn execute_action(
                 state.active_page = None;
                 state.focus = FocusTarget::Main;
                 state.nav_expanded = false;
-            } else if !cmd.is_empty() {
-                let window_mode = app_store::actions::get_window_mode(name, registered_apps.get(name));
-                if window_mode == "fullscreen" {
-                    logging::info(&format!("Launching {} in fullscreen mode", name));
-                    return NavResult::RunForeground(cmd);
-                }
-
-                logging::info(&format!("Launching {} in embedded TUIX mode", name));
-                *active_installed_app = InstalledDashboard::start(name, name, &cmd, 80, 24);
-                state.active_app = Some(name.to_string());
-                state.active_page = None;
-                state.focus = FocusTarget::Main;
+            } else {
+                logging::error(&format!("No runnable binary found for app {}", name));
             }
         }
     } else if let Some(page_name) = data.strip_prefix("page:") {
@@ -1013,6 +965,7 @@ fn handle_main_key(
                 ss.confirm_cursor = 0;
             } else if ss.install_location_dialog {
                 ss.install_location_dialog = false;
+                ss.pending_install_key = None;
             } else if ss.browser.active {
                 // Close browser sub-views first, then browser itself
                 use crate::app_store::awesome_ratatui_manager::BrowserFocus;
@@ -1292,7 +1245,7 @@ fn handle_appstore_key(
     registered_apps: &std::collections::HashMap<String, Value>,
     active_installed_app: &mut Option<InstalledDashboard>,
 ) {
-    use crate::app_store::state::{AppStoreFocus, ConfirmAction, InstallLocation, InstallStatus};
+    use crate::app_store::state::{AppStoreFocus, ConfirmAction, InstallStatus};
 
     let ss = &mut state.app_store;
 
@@ -1322,7 +1275,9 @@ fn handle_appstore_key(
                     ConfirmAction::UninstallGlobal(ref key) => {
                         if ss.confirm_cursor == 0 {
                             let meta = registered_apps.get(key.as_str());
-                            let crate_name = meta.and_then(|m| m.get("crate_name").and_then(|v| v.as_str())).unwrap_or(key).to_string();
+                            let crate_name = meta
+                                .map(|m| app_store::actions::resolve_package_name(key, m))
+                                .unwrap_or_else(|| key.to_string());
                             let category = meta.and_then(|m| m.get("category").and_then(|v| v.as_str())).unwrap_or("Other").to_string();
                             ss.start_operation(key.clone(), false, None);
                             let output = ss.thread_output.clone();
@@ -1357,7 +1312,9 @@ fn handle_appstore_key(
                         // 0=PATH, 1=Downloads, 2=Both, 3=Cancel
                         if ss.confirm_cursor <= 2 {
                             let meta = registered_apps.get(key.as_str());
-                            let crate_name = meta.and_then(|m| m.get("crate_name").and_then(|v| v.as_str())).unwrap_or(key).to_string();
+                            let crate_name = meta
+                                .map(|m| app_store::actions::resolve_package_name(key, m))
+                                .unwrap_or_else(|| key.to_string());
                             let category = meta.and_then(|m| m.get("category").and_then(|v| v.as_str())).unwrap_or("Other").to_string();
                             ss.start_operation(key.clone(), false, None);
                             let output = ss.thread_output.clone();
@@ -1408,29 +1365,31 @@ fn handle_appstore_key(
                 let location = ss.available_install_methods[ss.install_location_cursor];
                 ss.install_location_dialog = false;
 
-                if let Some(key) = ss.selected_app_key().cloned() {
-                    if let Some(meta) = registered_apps.get(&key) {
+                // A browser "Add & Install" pins its own key; otherwise use the selection.
+                let key = ss
+                    .pending_install_key
+                    .take()
+                    .or_else(|| ss.selected_app_key().cloned());
+
+                if let Some(key) = key {
+                    // The app may have just been added, so `registered_apps` can be stale.
+                    let meta = registered_apps.get(&key).cloned().or_else(|| {
+                        registry::load_registered_apps().get(&key).cloned()
+                    });
+                    if let Some(meta) = meta {
                         ss.start_operation(key.clone(), true, Some(location));
                         let output = ss.thread_output.clone();
                         let done = ss.thread_done.clone();
                         let ok_flag = ss.thread_success.clone();
-
-                        match location {
-                            InstallLocation::Global => {
-                                let crate_name = meta.get("crate_name").and_then(|v| v.as_str()).unwrap_or(&key).to_string();
-                                app_store::actions::spawn_install_global(&crate_name, output, done, ok_flag);
-                            }
-                            InstallLocation::Local => {
-                                let repo = meta.get("repository").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                                let category = meta.get("category").and_then(|v| v.as_str()).unwrap_or("Other").to_string();
-                                app_store::actions::spawn_install_local(&key, &repo, &category, output, done, ok_flag);
-                            }
-                        }
+                        app_store::actions::spawn_install(location, &key, &meta, output, done, ok_flag);
+                    } else {
+                        logging::error(&format!("App Store: install requested for unknown app '{}'", key));
                     }
                 }
             }
             Action::Back => {
                 ss.install_location_dialog = false;
+                ss.pending_install_key = None;
             }
             _ => {}
         }
@@ -1723,38 +1682,17 @@ fn handle_appstore_action(
 
     // For installed apps, index 0 = Run, then the rest shift by 1
     if is_installed && ss.right_action_cursor == 0 {
-        let crate_name = meta.get("crate_name").and_then(|v| v.as_str()).unwrap_or(&key);
         let category = meta.get("category").and_then(|v| v.as_str()).unwrap_or("Other");
-        let has_global = app_store::actions::detect_global_install(crate_name).is_some();
-        let has_local = app_store::actions::detect_local_install(&key, category).is_some();
+        let launch_cmd = app_store::actions::resolve_launch_cmd(&key, category, Some(meta), None);
 
-        if has_global && has_local {
-            // Use saved preference
-            let preferred = app_store::actions::get_run_source(&key);
-            let local_subdir = if category == "Dashboard" { "dashboards" } else { "applications" };
-            let local_bin = format!("downloads/{}/{}/target/release/{}", local_subdir, key, crate_name);
-            let launch_cmd = if preferred == "local" {
-                logging::info(&format!("App Store: running {} from Downloads source", key));
-                vec![local_bin]
-            } else {
-                logging::info(&format!("App Store: running {} from PATH source", key));
-                vec![crate_name.to_string()]
-            };
+        if !launch_cmd.is_empty() {
             logging::info(&format!("App Store: launching {} in embedded TUIX mode", key));
             *active_installed_app = InstalledDashboard::start(&key, &key, &launch_cmd, 80, 24);
             state.active_app = Some(key.clone());
             state.active_page = None;
         } else {
-            let cmd: Vec<String> = meta.get("cmd")
-                .and_then(|c| c.as_array())
-                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
-                .unwrap_or_default();
-            if !cmd.is_empty() {
-                logging::info(&format!("App Store: launching {} in embedded TUIX mode", key));
-                *active_installed_app = InstalledDashboard::start(&key, &key, &cmd, 80, 24);
-                state.active_app = Some(key.clone());
-                state.active_page = None;
-            }
+            logging::error(&format!("App Store: no runnable command found for {}", key));
+            state.popup = Some((format!("No runnable binary found for {}", key), Instant::now()));
         }
         return;
     }
@@ -1799,36 +1737,14 @@ fn handle_appstore_action(
                     if !repo.is_empty() { app_store::actions::open_url(repo); }
                 }
                 1 => {
-                    let methods: Vec<InstallLocation> = meta
-                        .get("install_methods")
-                        .and_then(|v| v.as_array())
-                        .map(|arr| {
-                            arr.iter()
-                                .filter_map(|v| match v.as_str() {
-                                    Some("global") => Some(InstallLocation::Global),
-                                    Some("local") => Some(InstallLocation::Local),
-                                    _ => None,
-                                })
-                                .collect()
-                        })
-                        .unwrap_or_else(|| vec![InstallLocation::Global]);
+                    let methods = app_store::actions::install_methods_for(meta);
 
                     if methods.len() == 1 {
                         ss.start_operation(key.clone(), true, Some(methods[0]));
                         let output = ss.thread_output.clone();
                         let done = ss.thread_done.clone();
                         let ok_flag = ss.thread_success.clone();
-                        match methods[0] {
-                            InstallLocation::Global => {
-                                let crate_name = meta.get("crate_name").and_then(|v| v.as_str()).unwrap_or(&key).to_string();
-                                app_store::actions::spawn_install_global(&crate_name, output, done, ok_flag);
-                            }
-                            InstallLocation::Local => {
-                                let repo = meta.get("repository").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                                let category = meta.get("category").and_then(|v| v.as_str()).unwrap_or("Other").to_string();
-                                app_store::actions::spawn_install_local(&key, &repo, &category, output, done, ok_flag);
-                            }
-                        }
+                        app_store::actions::spawn_install(methods[0], &key, meta, output, done, ok_flag);
                     } else {
                         ss.available_install_methods = methods;
                         ss.install_location_cursor = 0;
@@ -1891,12 +1807,22 @@ fn handle_appstore_action(
                     ss.confirm_cursor = 1;
                 }
                 2 if has_global_method => {
-                    let crate_name = meta.get("crate_name").and_then(|v| v.as_str()).unwrap_or(&key).to_string();
-                    ss.start_operation(key.clone(), true, Some(InstallLocation::Global));
-                    let output = ss.thread_output.clone();
-                    let done = ss.thread_done.clone();
-                    let ok_flag = ss.thread_success.clone();
-                    app_store::actions::spawn_install_global(&crate_name, output, done, ok_flag);
+                    let methods: Vec<InstallLocation> = app_store::actions::install_methods_for(meta)
+                        .into_iter()
+                        .filter(|m| !matches!(m, InstallLocation::Local))
+                        .collect();
+                    if methods.len() > 1 {
+                        ss.available_install_methods = methods;
+                        ss.install_location_cursor = 0;
+                        ss.install_location_dialog = true;
+                    } else {
+                        let loc = methods.first().copied().unwrap_or(InstallLocation::Global);
+                        ss.start_operation(key.clone(), true, Some(loc));
+                        let output = ss.thread_output.clone();
+                        let done = ss.thread_done.clone();
+                        let ok_flag = ss.thread_success.clone();
+                        app_store::actions::spawn_install(loc, &key, meta, output, done, ok_flag);
+                    }
                 }
                 n => {
                     let open_idx = if has_global_method { 3 } else { 2 };
@@ -1992,6 +1918,8 @@ fn open_awesome_ratatui_browser(ss: &mut crate::app_store::state::AppStoreState)
             ss.browser.fetched_at = Some(ts);
             ss.browser.loading = false;
             ss.browser.recompute_visible();
+            ss.browser.probe_cache.clear();
+            ss.browser.probe_selected();
             logging::info(&format!(
                 "Awesome Ratatui browser: opened with {} apps",
                 ss.browser.apps.len()
@@ -2067,6 +1995,7 @@ fn handle_browser_key(
                         if ss.browser.cursor < ss.browser.scroll {
                             ss.browser.scroll = ss.browser.cursor;
                         }
+                        ss.browser.probe_selected();
                     } else {
                         ss.browser.focus = BrowserFocus::DescriptionToggle;
                     }
@@ -2084,6 +2013,7 @@ fn handle_browser_key(
                         if ss.browser.cursor >= ss.browser.scroll + visible_h {
                             ss.browser.scroll = ss.browser.cursor.saturating_sub(visible_h - 1);
                         }
+                        ss.browser.probe_selected();
                     }
                 }
                 Action::Enter | Action::Right => {
@@ -2098,6 +2028,7 @@ fn handle_browser_key(
                                 ss.browser.recompute_visible();
                             }
                             RowKind::App(_) => {
+                                ss.browser.probe_selected();
                                 ss.browser.focus = BrowserFocus::Actions;
                                 ss.browser.action_cursor = 0;
                             }
@@ -2124,7 +2055,7 @@ fn handle_browser_key(
             let key = awesome_ratatui_manager::repo_to_key(&app.repo_url);
             let is_reg = registered_apps.contains_key(&key);
             let is_inst = matches!(
-                ss.install_statuses.get(&key),
+                ss.browser.status_for(&key, &ss.install_statuses),
                 Some(s) if !matches!(s, crate::app_store::state::InstallStatus::NotInstalled)
             );
             let max_actions = app_store::awesome_ratatui_page::build_browser_actions(is_reg, is_inst).len();
@@ -2168,7 +2099,7 @@ fn handle_browser_action(
     let key = awesome_ratatui_manager::repo_to_key(&app.repo_url);
     let is_reg = registered_apps.contains_key(&key);
     let is_inst = matches!(
-        ss.install_statuses.get(&key),
+        ss.browser.status_for(&key, &ss.install_statuses),
         Some(s) if !matches!(s, crate::app_store::state::InstallStatus::NotInstalled)
     );
 
@@ -2187,16 +2118,18 @@ fn handle_browser_action(
         "Add to App Store" => {
             awesome_ratatui_manager::add_to_registered(&app);
             logging::info(&format!("Awesome Ratatui: added '{}' to app store", app.name));
-            state.popup = Some((
-                format!("{} added to App Store", app.name),
-                std::time::Instant::now(),
-            ));
+            let msg = if is_inst {
+                format!("{} added to App Store (already installed)", app.name)
+            } else {
+                format!("{} added to App Store", app.name)
+            };
+            state.popup = Some((msg, std::time::Instant::now()));
             state.needs_sync = true;
             ss.browser.focus = awesome_ratatui_manager::BrowserFocus::List;
             ss.browser.action_cursor = 0;
         }
         "Add to App Store & Install" => {
-            awesome_ratatui_manager::add_to_registered(&app);
+            let added_key = awesome_ratatui_manager::add_to_registered(&app);
             logging::info(&format!("Awesome Ratatui: added '{}' to app store, prompting install", app.name));
             state.popup = Some((
                 format!("{} added to App Store — select install location", app.name),
@@ -2208,16 +2141,11 @@ fn handle_browser_action(
             ss.browser.search_query.clear();
             ss.install_location_dialog = true;
             ss.install_location_cursor = 0;
-            ss.available_install_methods = vec![
-                crate::app_store::state::InstallLocation::Global,
-                crate::app_store::state::InstallLocation::Local,
-            ];
-            // Set cursor to the newly added app
-            let added_key = awesome_ratatui_manager::repo_to_key(&app.repo_url);
-            ss.recompute_app_list(registered_apps);
-            if let Some(pos) = ss.computed_app_list.iter().position(|k| k == &added_key) {
-                ss.left_cursor = pos;
-            }
+            ss.available_install_methods =
+                app_store::actions::install_methods_for(&awesome_ratatui_manager::to_registered_value(&app));
+            // The left-pane cursor still points at the previously selected app, and
+            // `registered_apps` here predates the insert — pin the target explicitly.
+            ss.pending_install_key = Some(added_key);
         }
         "Remove from App Store" => {
             let mut reg = registered_apps.clone();
@@ -2357,11 +2285,45 @@ fn run_app() -> bool {
                     if state.app_store.pending_is_install {
                         if op_succeeded {
                             if let Some(location) = state.app_store.pending_install_location {
+                                // The app may have been registered mid-session
+                                if !registered_apps.contains_key(key) {
+                                    registered_apps = registry::load_registered_apps();
+                                }
+
+                                // Work out the binary that was actually produced —
+                                // it is often not named after the crate (connect-four -> play).
+                                let discovered = match registered_apps.get(key) {
+                                    Some(meta) => match location {
+                                        crate::app_store::state::InstallLocation::Local => {
+                                            app_store::actions::resolve_built_binary(key, meta)
+                                        }
+                                        _ => app_store::actions::resolve_installed_binary(
+                                            key,
+                                            meta,
+                                            &state.app_store.pre_install_bins,
+                                            &state.app_store.terminal_output,
+                                        ),
+                                    },
+                                    None => None,
+                                };
+                                if let Some(bin) = &discovered {
+                                    app_store::actions::record_binary_name(key, bin);
+                                    registered_apps = registry::load_registered_apps();
+                                    state.app_store.terminal_output.push(format!(
+                                        "Run command for {}: {}",
+                                        key, bin
+                                    ));
+                                }
+
                                 if let Some(meta) = registered_apps.get(key) {
                                     app_store::actions::add_to_config(key, meta, &location);
                                 }
                                 // If installed to PATH, ensure source is set to global
-                                if matches!(location, crate::app_store::state::InstallLocation::Global) {
+                                if matches!(
+                                    location,
+                                    crate::app_store::state::InstallLocation::Global
+                                        | crate::app_store::state::InstallLocation::Git
+                                ) {
                                     let current = app_store::actions::get_run_source(key);
                                     if current == "local" {
                                         app_store::actions::set_run_source(key, "global");
@@ -2370,6 +2332,7 @@ fn run_app() -> bool {
                             }
                             let loc_label = match state.app_store.pending_install_location {
                                 Some(crate::app_store::state::InstallLocation::Global) => "PATH",
+                                Some(crate::app_store::state::InstallLocation::Git) => "PATH (via Git)",
                                 Some(crate::app_store::state::InstallLocation::Local) => "Downloads",
                                 None => "unknown",
                             };
@@ -2400,6 +2363,12 @@ fn run_app() -> bool {
                     }
                     state.app_store.install_statuses = app_store::actions::refresh_all_statuses(&registered_apps);
                     state.app_store.recompute_app_list(&registered_apps);
+                    state.app_store.browser.probe_cache.clear();
+
+                    // Follow the app the operation applied to, not whatever was highlighted before
+                    if let Some(pos) = state.app_store.computed_app_list.iter().position(|k| k == key) {
+                        state.app_store.left_cursor = pos;
+                    }
 
                     // Keep highlight visible — clamp action cursor to new count
                     let new_status = state.app_store.selected_app_key()
@@ -2447,8 +2416,10 @@ fn run_app() -> bool {
             state.needs_sync = false;
             registered_apps = registry::load_registered_apps();
             let changed = app_store::actions::sync_installed_apps(&registered_apps);
+            registered_apps = registry::load_registered_apps();
             state.app_store.install_statuses = app_store::actions::refresh_all_statuses(&registered_apps);
             state.app_store.recompute_app_list(&registered_apps);
+            state.app_store.browser.probe_cache.clear();
             if changed {
                 dashboards = registry::load_dashboards();
                 apps_registry = registry::load_apps();

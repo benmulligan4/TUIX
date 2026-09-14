@@ -181,13 +181,15 @@ fn render_app_list(
                 let key = super::awesome_ratatui_manager::repo_to_key(&app.repo_url);
                 let is_reg = registered.contains_key(&key);
                 let is_inst = matches!(
-                    statuses.get(&key),
+                    browser.status_for(&key, statuses),
                     Some(s) if !matches!(s, InstallStatus::NotInstalled)
                 );
 
                 let prefix = if is_cursor { " » " } else { "   " };
-                let suffix = if is_inst {
+                let suffix = if is_inst && is_reg {
                     " (installed)"
+                } else if is_inst {
+                    " (already installed)"
                 } else if is_reg {
                     " (registered)"
                 } else {
@@ -267,10 +269,8 @@ fn render_app_detail(
 
     let key = super::awesome_ratatui_manager::repo_to_key(&app.repo_url);
     let is_reg = registered.contains_key(&key);
-    let is_inst = matches!(
-        statuses.get(&key),
-        Some(s) if !matches!(s, InstallStatus::NotInstalled)
-    );
+    let status = browser.status_for(&key, statuses).cloned().unwrap_or(InstallStatus::NotInstalled);
+    let is_inst = !matches!(status, InstallStatus::NotInstalled);
 
     let label_style = Style::default().fg(Color::DarkGray);
     let value_style = Style::default().fg(Color::White);
@@ -312,17 +312,30 @@ fn render_app_detail(
     }
     lines.push(Line::from(""));
 
-    let (status_text, status_color) = if is_inst {
-        ("Installed".to_string(), Color::Green)
-    } else if is_reg {
-        ("Registered (not installed)".to_string(), Color::Magenta)
-    } else {
-        ("Not in app store".to_string(), Color::DarkGray)
+    let (status_text, status_color) = match (&status, is_reg) {
+        (InstallStatus::NotInstalled, true) => ("Registered (not installed)".to_string(), Color::Magenta),
+        (InstallStatus::NotInstalled, false) => ("Not in app store".to_string(), Color::DarkGray),
+        (InstallStatus::Both(_, _), _) => ("Installed (PATH + Downloads)".to_string(), Color::Green),
+        (InstallStatus::Global(_), _) => ("Installed (PATH)".to_string(), Color::Green),
+        (InstallStatus::Local(_), _) => ("Installed (Downloads)".to_string(), Color::Green),
     };
     lines.push(Line::from(vec![
         Span::styled("  Status:      ", label_style),
         Span::styled(&status_text, Style::default().fg(status_color)),
     ]));
+
+    // Show where the existing install was found so the user can confirm it is the right one
+    let found_paths: Vec<&String> = match &status {
+        InstallStatus::Global(p) | InstallStatus::Local(p) => vec![p],
+        InstallStatus::Both(g, l) => vec![g, l],
+        InstallStatus::NotInstalled => Vec::new(),
+    };
+    for p in found_paths {
+        lines.push(Line::from(vec![
+            Span::styled("  Found at:    ", label_style),
+            Span::styled(p.as_str(), Style::default().fg(Color::Green)),
+        ]));
+    }
     lines.push(Line::from(""));
 
     lines.push(Line::from(Span::styled("  Actions:", label_style)));
@@ -369,7 +382,10 @@ pub fn build_browser_actions(is_registered: bool, is_installed: bool) -> Vec<Str
 
     if !is_registered {
         actions.push("Add to App Store".to_string());
-        actions.push("Add to App Store & Install".to_string());
+        // Already on this machine — adding it is enough, no install step needed
+        if !is_installed {
+            actions.push("Add to App Store & Install".to_string());
+        }
     } else if is_installed {
         actions.push("Open in App Store".to_string());
     } else {
