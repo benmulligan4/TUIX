@@ -1,4 +1,24 @@
 {
+  "sxtetris": {
+    "cmd": [
+      "downloads/applications/sxtetris/target/release/sxtetris"
+    ],
+    "label": "sxtetris",
+    "repository": "https://github.com/shixinhuang99/sxtetris",
+    "source": "local",
+    "type": "installed",
+    "version": "unknown"
+  },
+  "sigye": {
+    "cmd": [
+      "downloads/applications/sigye/target/release/sigye"
+    ],
+    "label": "sigye",
+    "repository": "https://github.com/am2rican5/sigye",
+    "source": "local",
+    "type": "installed",
+    "version": "unknown"
+  },
   "TextEditor": {
     "label": "Text Editor",
     "module": "applications::text_editor",
