@@ -406,9 +406,11 @@ fn render_right_pane(
     lines.push(Line::from(""));
 
     // Install status
+    let via_git = super::actions::installed_via_git(&selected_key, category);
+    let path_label = if via_git { "PATH via Git" } else { "PATH" };
     let (status_text, status_color) = match &install_status {
         InstallStatus::NotInstalled => ("Not installed".to_string(), Color::DarkGray),
-        InstallStatus::Global(path) => (format!("Installed to PATH: {}", path), Color::Green),
+        InstallStatus::Global(path) => (format!("Installed to {}: {}", path_label, path), Color::Green),
         InstallStatus::Local(path) => (format!("Installed to Downloads: {}", path), Color::Green),
         InstallStatus::Both(_, _) => ("Installed to Both".to_string(), Color::Green),
     };
@@ -418,9 +420,16 @@ fn render_right_pane(
         Span::styled(&status_text, Style::default().fg(status_color)),
     ]));
 
+    if via_git {
+        lines.push(Line::from(Span::styled(
+            "               (cargo install --git)",
+            Style::default().fg(Color::DarkGray),
+        )));
+    }
+
     if let InstallStatus::Both(g, l) = &install_status {
         lines.push(Line::from(Span::styled(
-            format!("    PATH:      {}", g),
+            format!("    {:<10} {}", format!("{}:", path_label), g),
             Style::default().fg(Color::Green),
         )));
         lines.push(Line::from(Span::styled(
@@ -791,8 +800,17 @@ fn render_confirm_dialog(frame: &mut Frame, area: Rect, state: &AppStoreState) {
 }
 
 fn render_install_location_dialog(frame: &mut Frame, area: Rect, state: &AppStoreState) {
-    let width = 50u16.min(area.width);
-    let height = (state.available_install_methods.len() as u16 + 4).min(area.height);
+    let width = 56u16.min(area.width);
+    let inner_width = width.saturating_sub(4) as usize;
+
+    let note_lines: Vec<String> = state
+        .install_dialog_note
+        .as_deref()
+        .map(|n| wrap_text(n, inner_width))
+        .unwrap_or_default();
+
+    let height =
+        (state.available_install_methods.len() as u16 + note_lines.len() as u16 + 5).min(area.height);
 
     let popup_rect = Rect {
         x: area.x + (area.width.saturating_sub(width)) / 2,
@@ -811,13 +829,21 @@ fn render_install_location_dialog(frame: &mut Frame, area: Rect, state: &AppStor
 
     let inner = popup_rect.inner(Margin { horizontal: 1, vertical: 1 });
 
-    let mut lines = vec![
-        Line::from(Span::styled(
-            "  Where would you like to install?",
-            Style::default().fg(Color::White),
-        )),
-        Line::from(""),
-    ];
+    let mut lines: Vec<Line> = Vec::new();
+    for note in &note_lines {
+        lines.push(Line::from(Span::styled(
+            format!("  {}", note),
+            Style::default().fg(Color::Green),
+        )));
+    }
+    if !note_lines.is_empty() {
+        lines.push(Line::from(""));
+    }
+    lines.push(Line::from(Span::styled(
+        "  Where would you like to install?",
+        Style::default().fg(Color::White),
+    )));
+    lines.push(Line::from(""));
 
     for (i, method) in state.available_install_methods.iter().enumerate() {
         let style = if i == state.install_location_cursor {

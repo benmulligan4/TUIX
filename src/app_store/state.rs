@@ -115,6 +115,8 @@ pub struct AppStoreState {
     pub confirm_cursor: usize,
     pub install_location_dialog: bool,
     pub install_location_cursor: usize,
+    /// Context line shown inside the install dialog, e.g. after adding from the browser
+    pub install_dialog_note: Option<String>,
     pub available_install_methods: Vec<InstallLocation>,
     pub computed_app_list: Vec<String>,
     pub left_visible_rows: Vec<LeftRowKind>,
@@ -169,6 +171,7 @@ impl AppStoreState {
             confirm_cursor: 0,
             install_location_dialog: false,
             install_location_cursor: 0,
+            install_dialog_note: None,
             available_install_methods: Vec::new(),
             computed_app_list: Vec::new(),
             left_visible_rows: Vec::new(),

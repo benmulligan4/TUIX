@@ -582,7 +582,8 @@ pub fn add_to_config(
     let repo = meta.get("repository").and_then(|v| v.as_str()).unwrap_or("");
 
     let source = match location {
-        InstallLocation::Global | InstallLocation::Git => "global",
+        InstallLocation::Global => "global",
+        InstallLocation::Git => "git",
         InstallLocation::Local => "local",
     };
 
@@ -600,6 +601,63 @@ pub fn add_to_config(
     config.insert(app_key.to_string(), entry);
     registry::save_config(config_file, &config);
     logging::info(&format!("App Store: added {} to {}", app_key, config_file));
+}
+
+/// The recorded `source` for an installed app ("global", "git", "local", or "").
+pub fn installed_source(app_key: &str, category: &str) -> String {
+    let config = if category == "Dashboard" {
+        registry::load_dashboards()
+    } else {
+        registry::load_apps()
+    };
+    config
+        .get(app_key)
+        .and_then(|e| e.get("source"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string()
+}
+
+/// True if the PATH copy of this app was installed with `cargo install --git`.
+pub fn installed_via_git(app_key: &str, category: &str) -> bool {
+    installed_source(app_key, category) == "git"
+}
+
+/// Human-readable description of where an install came from, for logs and UI.
+pub fn install_source_label(location: &InstallLocation, app_key: &str, meta: &Value) -> String {
+    let repo = meta
+        .get("repository")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .unwrap_or("unknown repository");
+    match location {
+        InstallLocation::Global => {
+            let crate_name = meta
+                .get("crate_name")
+                .and_then(|v| v.as_str())
+                .unwrap_or(app_key);
+            format!("crates.io (cargo install {})", crate_name)
+        }
+        InstallLocation::Git => format!("git repository {} (cargo install --git)", repo),
+        InstallLocation::Local => format!("git clone of {} (built from source)", repo),
+    }
+}
+
+/// Where an install ended up on disk, for logs and UI.
+pub fn install_destination(app_key: &str, meta: &Value, location: &InstallLocation) -> String {
+    let category = meta.get("category").and_then(|v| v.as_str()).unwrap_or("Other");
+    match location {
+        InstallLocation::Local => {
+            let candidates = binary_candidates(app_key, meta);
+            scan_release_binary(&local_release_dir(app_key, category), &candidates)
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_else(|| local_release_dir(app_key, category).to_string_lossy().to_string())
+        }
+        InstallLocation::Global | InstallLocation::Git => resolve_global_install(app_key, meta)
+            .map(|(_, p)| p)
+            .or_else(|| cargo_bin_dir().map(|d| d.to_string_lossy().to_string()))
+            .unwrap_or_else(|| "PATH".to_string()),
+    }
 }
 
 /// Remove an app entry from apps.json or dashboards.json.
@@ -658,8 +716,12 @@ pub fn sync_installed_apps(registered: &HashMap<String, Value>) -> bool {
         }
 
         let cmd = resolve_cmd(key, meta, &location);
-        let source = match &location {
-            InstallLocation::Local => "local",
+        // A PATH install could have come from crates.io or `--git`; detection cannot
+        // tell them apart, so keep whatever the original install recorded.
+        let previous_source = config.get(key).and_then(|e| e.get("source")).and_then(|v| v.as_str());
+        let source = match (&location, previous_source) {
+            (InstallLocation::Local, _) => "local",
+            (_, Some("git")) => "git",
             _ => "global",
         };
         let label = meta.get("label").and_then(|v| v.as_str()).unwrap_or(key);

@@ -963,6 +963,7 @@ fn handle_main_key(
                 ss.confirm_cursor = 0;
             } else if ss.install_location_dialog {
                 ss.install_location_dialog = false;
+                ss.install_dialog_note = None;
                 ss.pending_install_key = None;
             } else if ss.browser.active {
                 // Close browser sub-views first, then browser itself
@@ -1362,6 +1363,7 @@ fn handle_appstore_key(
             Action::Enter => {
                 let location = ss.available_install_methods[ss.install_location_cursor];
                 ss.install_location_dialog = false;
+                ss.install_dialog_note = None;
 
                 // A browser "Add & Install" pins its own key; otherwise use the selection.
                 let key = ss
@@ -1387,6 +1389,7 @@ fn handle_appstore_key(
             }
             Action::Back => {
                 ss.install_location_dialog = false;
+                ss.install_dialog_note = None;
                 ss.pending_install_key = None;
             }
             _ => {}
@@ -1750,6 +1753,7 @@ fn handle_appstore_action(
                     } else {
                         ss.available_install_methods = methods;
                         ss.install_location_cursor = 0;
+                        ss.install_dialog_note = None;
                         ss.install_location_dialog = true;
                     }
                 }
@@ -1808,6 +1812,7 @@ fn handle_appstore_action(
                     if methods.len() > 1 {
                         ss.available_install_methods = methods;
                         ss.install_location_cursor = 0;
+                        ss.install_dialog_note = None;
                         ss.install_location_dialog = true;
                     } else {
                         let loc = methods.first().copied().unwrap_or(InstallLocation::Global);
@@ -2122,16 +2127,14 @@ fn handle_browser_action(
         "Add to App Store & Install" => {
             let added_key = awesome_ratatui_manager::add_to_registered(&app);
             logging::info(&format!("Awesome Ratatui: added '{}' to app store, prompting install", app.name));
-            state.popup = Some((
-                format!("{} added to App Store — select install location", app.name),
-                std::time::Instant::now(),
-            ));
             state.needs_sync = true;
             // Open install location dialog
             ss.browser.active = false;
             ss.browser.search_query.clear();
             ss.install_location_dialog = true;
             ss.install_location_cursor = 0;
+            // Shown inside the dialog rather than as a toast, so the two do not overlap
+            ss.install_dialog_note = Some(format!("✓ {} added to the App Store", app.name));
             ss.available_install_methods =
                 app_store::actions::install_methods_for(&awesome_ratatui_manager::to_registered_value(&app));
             // The left-pane cursor still points at the previously selected app, and
@@ -2308,6 +2311,15 @@ fn run_app() -> bool {
 
                                 if let Some(meta) = registered_apps.get(key) {
                                     app_store::actions::add_to_config(key, meta, &location);
+
+                                    let from = app_store::actions::install_source_label(&location, key, meta);
+                                    let to = app_store::actions::install_destination(key, meta, &location);
+                                    logging::info(&format!(
+                                        "App Store: installed {} from {} to {}",
+                                        key, from, to
+                                    ));
+                                    state.app_store.terminal_output.push(format!("Installed from: {}", from));
+                                    state.app_store.terminal_output.push(format!("Installed to:   {}", to));
                                 }
                                 // If installed to PATH, ensure source is set to global
                                 if matches!(
@@ -2418,7 +2430,8 @@ fn run_app() -> bool {
                 } else {
                     state.popup = Some(("App list is up to date".to_string(), Instant::now()));
                 }
-            } else if changed {
+            } else if changed && !state.app_store.install_location_dialog {
+                // Don't toast over the install dialog
                 state.popup = Some(("App list synced with installed apps".to_string(), Instant::now()));
             }
         }
