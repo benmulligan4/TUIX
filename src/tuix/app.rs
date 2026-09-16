@@ -665,8 +665,6 @@ enum NavResult {
     Quit,
     Restart,
     ActivateInternalApp,
-    #[allow(dead_code)]
-    RunForeground(Vec<String>),
 }
 
 fn handle_navbar_key(
@@ -804,9 +802,10 @@ fn execute_action(
                 }
 
                 if window_mode == "fullscreen" && !cmd.is_empty() {
-                    logging::info(&format!("Launching dashboard {} in fullscreen mode", name));
+                    logging::info(&format!("Launching dashboard {} in a new window", name));
                     *active_installed_dash = None;
-                    return NavResult::RunForeground(cmd);
+                    state.pending_foreground = Some(cmd);
+                    return NavResult::None;
                 }
 
                 logging::info(&format!("Launching dashboard {} in embedded TUIX mode", name));
@@ -882,8 +881,9 @@ fn execute_action(
             if !launch_cmd.is_empty() {
                 let window_mode = app_store::actions::get_window_mode(name, registered_apps.get(name));
                 if window_mode == "fullscreen" {
-                    logging::info(&format!("Launching {} in fullscreen mode", name));
-                    return NavResult::RunForeground(launch_cmd);
+                    logging::info(&format!("Launching {} in a new window", name));
+                    state.pending_foreground = Some(launch_cmd);
+                    return NavResult::None;
                 }
 
                 logging::info(&format!("Launching {} in embedded TUIX mode", name));
@@ -943,8 +943,6 @@ enum MainResult {
     None,
     Quit,
     Restart,
-    #[allow(dead_code)]
-    RunForeground(Vec<String>),
 }
 
 fn handle_main_key(
@@ -1686,15 +1684,22 @@ fn handle_appstore_action(
         let category = meta.get("category").and_then(|v| v.as_str()).unwrap_or("Other");
         let launch_cmd = app_store::actions::resolve_launch_cmd(&key, category, Some(meta), None);
 
-        if !launch_cmd.is_empty() {
-            logging::info(&format!("App Store: launching {} in embedded TUIX mode", key));
-            *active_installed_app = InstalledDashboard::start(&key, &key, &launch_cmd, 80, 24);
-            state.active_app = Some(key.clone());
-            state.active_page = None;
-        } else {
+        if launch_cmd.is_empty() {
             logging::error(&format!("App Store: no runnable command found for {}", key));
             state.popup = Some((format!("No runnable binary found for {}", key), Instant::now()));
+            return;
         }
+
+        if app_store::actions::get_window_mode(&key, Some(meta)) == "fullscreen" {
+            logging::info(&format!("App Store: launching {} in a new window", key));
+            state.pending_foreground = Some(launch_cmd);
+            return;
+        }
+
+        logging::info(&format!("App Store: launching {} in embedded TUIX mode", key));
+        *active_installed_app = InstalledDashboard::start(&key, &key, &launch_cmd, 80, 24);
+        state.active_app = Some(key.clone());
+        state.active_page = None;
         return;
     }
 
@@ -1720,7 +1725,7 @@ fn handle_appstore_action(
             let current = app_store::actions::get_window_mode(&key, Some(meta));
             let new_mode = if current == "fullscreen" { "embedded" } else { "fullscreen" };
             app_store::actions::set_window_mode(&key, new_mode);
-            let label = if new_mode == "fullscreen" { "Fullscreen" } else { "TUIX Container" };
+            let label = app_store::actions::window_mode_label(new_mode);
             state.popup = Some((format!("Window mode set to {}", label), Instant::now()));
             return;
         }
@@ -3012,15 +3017,6 @@ fn run_app() -> bool {
                     should_restart = true;
                     break;
                 }
-                NavResult::RunForeground(cmd) => {
-                    // Restore terminal, run subprocess, re-enter
-                    disable_raw_mode().ok();
-                    execute!(terminal.backend_mut(), LeaveAlternateScreen).ok();
-                    run_foreground(&cmd);
-                    enable_raw_mode().ok();
-                    execute!(terminal.backend_mut(), EnterAlternateScreen).ok();
-                    terminal.clear().ok();
-                }
                 NavResult::ActivateInternalApp | NavResult::None => {}
             }
         } else {
@@ -3030,18 +3026,25 @@ fn run_app() -> bool {
                     should_restart = true;
                     break;
                 }
-                MainResult::RunForeground(cmd) => {
-                    disable_raw_mode().ok();
-                    execute!(terminal.backend_mut(), LeaveAlternateScreen).ok();
-                    run_foreground(&cmd);
-                    enable_raw_mode().ok();
-                    execute!(terminal.backend_mut(), EnterAlternateScreen).ok();
-                    terminal.clear().ok();
-                }
                 MainResult::None => {}
             }
             if state.active_app.is_none() && active_internal_app.is_some() {
                 active_internal_app = None;
+            }
+        }
+
+        // An app was asked to run outside the TUIX container
+        if let Some(cmd) = state.pending_foreground.take() {
+            if app_store::actions::launch_detached(&cmd) {
+                state.popup = Some(("Launched in a new window".to_string(), Instant::now()));
+            } else {
+                // Hand our own terminal over to the app until it exits
+                disable_raw_mode().ok();
+                execute!(terminal.backend_mut(), LeaveAlternateScreen).ok();
+                run_foreground(&cmd);
+                enable_raw_mode().ok();
+                execute!(terminal.backend_mut(), EnterAlternateScreen).ok();
+                terminal.clear().ok();
             }
         }
     }

@@ -29,7 +29,8 @@ fn settings_path() -> PathBuf {
             "clock_format_24h": true,
             "clock_show_seconds": false,
             "border_style": "Rounded",
-            "status_bar_enabled": false
+            "status_bar_enabled": false,
+            "new_window_keeps_tuix_open": false
         },
         "display": {
             "fullscreen": false

@@ -586,7 +586,7 @@ fn render_right_pane(
 
         if !supports_embed {
             lines.push(Line::from(Span::styled(
-                "  ⚠ This app only supports fullscreen mode",
+                "  ⚠ This app only supports running in a new window",
                 Style::default().fg(Color::Yellow),
             )));
             lines.push(Line::from(Span::styled(
@@ -595,7 +595,7 @@ fn render_right_pane(
             )));
         } else {
             let current_mode = super::actions::get_window_mode(&selected_key, registered.get(&selected_key));
-            let mode_label = if current_mode == "fullscreen" { "Fullscreen" } else { "TUIX Container" };
+            let mode_label = super::actions::window_mode_label(&current_mode);
             let mode_style = if in_actions && state.right_action_cursor == action_idx {
                 Style::default().fg(Color::Black).bg(Color::Cyan)
             } else {

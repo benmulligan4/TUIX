@@ -828,6 +828,153 @@ pub fn supports_embedded(registered_meta: Option<&serde_json::Value>) -> bool {
         .unwrap_or(true)
 }
 
+// ── Launching outside the TUIX container ────────────────────────────────
+
+/// Human-readable label for a stored window mode value.
+pub fn window_mode_label(mode: &str) -> &'static str {
+    if mode == "fullscreen" { "New Window" } else { "TUIX Container" }
+}
+
+/// Whether TUIX should stay running while an app occupies a new window.
+/// When false, TUIX hands over its own terminal so only the app is visible.
+pub fn keep_tuix_open() -> bool {
+    let settings = crate::settings::persistence::load();
+    crate::settings::persistence::get_bool(&settings, "appearance.new_window_keeps_tuix_open", false)
+}
+
+fn command_exists(name: &str) -> bool {
+    let probe = if cfg!(target_os = "windows") { "where" } else { "which" };
+    Command::new(probe)
+        .arg(name)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+/// Terminal emulator to use on Linux / Raspberry Pi, if one is installed.
+fn linux_terminal() -> Option<&'static str> {
+    [
+        "x-terminal-emulator",
+        "lxterminal",
+        "gnome-terminal",
+        "konsole",
+        "xfce4-terminal",
+        "mate-terminal",
+        "alacritty",
+        "kitty",
+        "xterm",
+    ]
+    .into_iter()
+    .find(|t| command_exists(t))
+}
+
+/// True if the OS can realistically open a second terminal window.
+/// A Raspberry Pi booted to a bare TTY has no display server, so it cannot.
+pub fn can_open_new_window() -> bool {
+    if cfg!(target_os = "windows") || cfg!(target_os = "macos") {
+        return true;
+    }
+    let has_display =
+        std::env::var_os("DISPLAY").is_some() || std::env::var_os("WAYLAND_DISPLAY").is_some();
+    has_display && linux_terminal().is_some()
+}
+
+/// Quote a single argument for a POSIX shell.
+fn sh_quote(arg: &str) -> String {
+    format!("'{}'", arg.replace('\'', r"'\''"))
+}
+
+fn sh_join(cmd: &[String]) -> String {
+    cmd.iter().map(|a| sh_quote(a)).collect::<Vec<_>>().join(" ")
+}
+
+/// A new terminal window starts in the user's home directory, so relative
+/// binary paths from `downloads/` must be made absolute before handing them over.
+fn absolutize(cmd: &[String]) -> Vec<String> {
+    let mut out = cmd.to_vec();
+    let Some(program) = out.first() else { return out };
+    if !program.contains('/') && !program.contains('\\') {
+        return out; // bare name, resolved via PATH
+    }
+    if let Ok(abs) = std::fs::canonicalize(program) {
+        out[0] = abs.to_string_lossy().to_string();
+    }
+    out
+}
+
+/// Open `cmd` in a new OS terminal window, detached from TUIX.
+/// Returns false if no new window could be opened.
+pub fn spawn_in_new_window(cmd: &[String]) -> bool {
+    if cmd.is_empty() {
+        return false;
+    }
+    let cmd = absolutize(cmd);
+    let cmd = &cmd[..];
+    logging::info(&format!("Launching in a new window: {:?}", cmd));
+
+    if cfg!(target_os = "macos") {
+        // `do script` takes a shell command string, embedded in AppleScript source
+        let shell_cmd = sh_join(cmd);
+        let script = format!(
+            "tell application \"Terminal\"\nactivate\ndo script \"{}\"\nend tell",
+            shell_cmd.replace('\\', "\\\\").replace('"', "\\\"")
+        );
+        return Command::new("osascript")
+            .arg("-e")
+            .arg(script)
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+    }
+
+    if cfg!(target_os = "windows") {
+        if command_exists("wt.exe") {
+            let mut c = Command::new("wt.exe");
+            c.args(["-w", "new"]).args(cmd);
+            if c.spawn().is_ok() {
+                return true;
+            }
+        }
+        // `start` opens a console app in its own window; the quoted first
+        // argument is consumed as the window title.
+        let mut c = Command::new("cmd");
+        c.arg("/C").arg("start").arg("TUIX App").args(cmd);
+        return c.spawn().is_ok();
+    }
+
+    let Some(term) = linux_terminal() else { return false };
+    let mut c = Command::new(term);
+    if term == "gnome-terminal" {
+        c.arg("--").args(cmd);
+    } else {
+        // Most emulators stop parsing their own flags after -e
+        c.arg("-e").args(cmd);
+    }
+    c.spawn().is_ok()
+}
+
+/// Decide how to launch an app that is not running in the TUIX container.
+///
+/// Returns true when the app was handed to a separate OS window and TUIX should
+/// keep running. Returns false when the caller should give up its own terminal
+/// to the app instead — either because the user asked for that, or because no
+/// windowing system is available.
+pub fn launch_detached(cmd: &[String]) -> bool {
+    if !keep_tuix_open() {
+        return false;
+    }
+    if !can_open_new_window() {
+        logging::info("New window unavailable (no display server) — using the current terminal");
+        return false;
+    }
+    if spawn_in_new_window(cmd) {
+        true
+    } else {
+        logging::error("Failed to open a new terminal window — using the current terminal");
+        false
+    }
+}
+
 // --- Thread-spawning variants for non-blocking UI ---
 
 pub fn push_output(buf: &Arc<Mutex<Vec<String>>>, line: String) {
