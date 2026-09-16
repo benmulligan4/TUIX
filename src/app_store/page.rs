@@ -438,12 +438,8 @@ fn render_right_pane(
     let in_actions = state.focus == AppStoreFocus::RightPane && state.in_right_actions;
     let mut action_idx: usize = 0;
 
-    let install_methods: Vec<&str> = meta.get("install_methods")
-        .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
-        .unwrap_or_else(|| vec!["global"]);
-    let supports_local = install_methods.contains(&"local");
-    let supports_global = install_methods.contains(&"global");
+    let supports_local = super::actions::supports_downloads_install(meta);
+    let supports_global = super::actions::supports_path_install(meta);
 
     // Run button (only for installed apps)
     let is_installed = !matches!(install_status, InstallStatus::NotInstalled);

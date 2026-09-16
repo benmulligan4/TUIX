@@ -407,7 +407,7 @@ pub fn to_registered_value(app: &AwesomeApp) -> Value {
         "crate_name": key,
         "cmd": [key],
         "pre_installed": false,
-        "install_methods": ["global", "local"],
+        "install_methods": ["global", "git", "local"],
         "default_window_mode": "embedded",
         "supports_embedded": true,
         "approved": false

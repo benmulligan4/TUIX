@@ -485,145 +485,6 @@ pub fn record_binary_name(app_key: &str, bin_name: &str) {
     ));
 }
 
-/// Install an app globally via `cargo install`.
-#[allow(dead_code)]
-pub fn install_global(crate_name: &str, output: &mut Vec<String>) {
-    let cmd_str = format!("cargo install {}", crate_name);
-    output.push(format!("$ {}", cmd_str));
-    logging::info(&format!("App Store: installing globally: {}", crate_name));
-
-    match Command::new("cargo")
-        .args(["install", crate_name])
-        .output()
-    {
-        Ok(result) => {
-            let stdout = String::from_utf8_lossy(&result.stdout);
-            let stderr = String::from_utf8_lossy(&result.stderr);
-            for line in stdout.lines() {
-                output.push(line.to_string());
-            }
-            for line in stderr.lines() {
-                output.push(line.to_string());
-            }
-            if result.status.success() {
-                output.push(format!("Successfully installed {}", crate_name));
-                logging::info(&format!("App Store: {} installed globally", crate_name));
-            } else {
-                output.push(format!("Failed to install {} (exit code: {:?})", crate_name, result.status.code()));
-                logging::error(&format!("App Store: failed to install {} globally", crate_name));
-            }
-        }
-        Err(e) => {
-            output.push(format!("Error: {}", e));
-            logging::error(&format!("App Store: cargo install error: {}", e));
-        }
-    }
-}
-
-/// Install an app locally via `git clone` + `cargo build --release`.
-#[allow(dead_code)]
-pub fn install_local(app_key: &str, repo_url: &str, category: &str, output: &mut Vec<String>) {
-    let subdir = if category == "Dashboard" { "dashboards" } else { "applications" };
-    let target_dir = format!("downloads/{}/{}", subdir, app_key);
-
-    // Create parent directory
-    let _ = std::fs::create_dir_all(format!("downloads/{}", subdir));
-
-    // Clone
-    let clone_cmd = format!("git clone {} {}", repo_url, target_dir);
-    output.push(format!("$ {}", clone_cmd));
-    logging::info(&format!("App Store: cloning {} to {}", repo_url, target_dir));
-
-    if std::path::Path::new(&target_dir).exists() {
-        output.push(format!("Directory {} already exists, pulling instead...", target_dir));
-        match Command::new("git")
-            .args(["-C", &target_dir, "pull"])
-            .output()
-        {
-            Ok(result) => {
-                for line in String::from_utf8_lossy(&result.stdout).lines() {
-                    output.push(line.to_string());
-                }
-                for line in String::from_utf8_lossy(&result.stderr).lines() {
-                    output.push(line.to_string());
-                }
-            }
-            Err(e) => {
-                output.push(format!("Git pull error: {}", e));
-                logging::error(&format!("App Store: git pull error: {}", e));
-                return;
-            }
-        }
-    } else {
-        match Command::new("git")
-            .args(["clone", repo_url, &target_dir])
-            .output()
-        {
-            Ok(result) => {
-                for line in String::from_utf8_lossy(&result.stdout).lines() {
-                    output.push(line.to_string());
-                }
-                for line in String::from_utf8_lossy(&result.stderr).lines() {
-                    output.push(line.to_string());
-                }
-                if !result.status.success() {
-                    output.push("Git clone failed.".into());
-                    logging::error(&format!("App Store: git clone failed for {}", app_key));
-                    return;
-                }
-            }
-            Err(e) => {
-                output.push(format!("Error: {}", e));
-                logging::error(&format!("App Store: git clone error: {}", e));
-                return;
-            }
-        }
-    }
-
-    // Remove .git and .github directories to save space
-    let git_dir = format!("{}/.git", target_dir);
-    let github_dir = format!("{}/.github", target_dir);
-    if std::path::Path::new(&git_dir).exists() {
-        let _ = std::fs::remove_dir_all(&git_dir);
-        output.push("Removed .git directory".into());
-    }
-    if std::path::Path::new(&github_dir).exists() {
-        let _ = std::fs::remove_dir_all(&github_dir);
-        output.push("Removed .github directory".into());
-    }
-
-    // Build
-    let manifest = format!("{}/Cargo.toml", target_dir);
-    let build_cmd = format!("cargo build --release --manifest-path {}", manifest);
-    output.push(format!("$ {}", build_cmd));
-    logging::info(&format!("App Store: building {}", app_key));
-
-    match Command::new("cargo")
-        .args(["build", "--release", "--manifest-path", &manifest])
-        .output()
-    {
-        Ok(result) => {
-            for line in String::from_utf8_lossy(&result.stdout).lines() {
-                output.push(line.to_string());
-            }
-            for line in String::from_utf8_lossy(&result.stderr).lines() {
-                output.push(line.to_string());
-            }
-            if result.status.success() {
-                output.push(format!("Successfully built {}", app_key));
-                logging::info(&format!("App Store: {} built successfully", app_key));
-            } else {
-                output.push(format!("Build failed for {}", app_key));
-                logging::error(&format!("App Store: build failed for {}", app_key));
-            }
-        }
-        Err(e) => {
-            output.push(format!("Error: {}", e));
-            logging::error(&format!("App Store: cargo build error: {}", e));
-        }
-    }
-}
-
 /// Uninstall an app globally via `cargo uninstall`.
 pub fn uninstall_global(crate_name: &str, output: &mut Vec<String>) {
     let cmd_str = format!("cargo uninstall {}", crate_name);
@@ -1060,8 +921,8 @@ pub fn spawn_install_git(repo_url: &str, output: Arc<Mutex<Vec<String>>>, done: 
     });
 }
 
-/// Install options to offer for an app. `cargo install --git` is available for
-/// anything with a repository URL, since it does not require a crates.io release.
+/// Install options to offer for an app, driven by its declared `install_methods`.
+/// `git` and `local` additionally require a repository URL to be usable.
 pub fn install_methods_for(meta: &Value) -> Vec<InstallLocation> {
     let declared: Vec<&str> = meta
         .get("install_methods")
@@ -1078,7 +939,7 @@ pub fn install_methods_for(meta: &Value) -> Vec<InstallLocation> {
     if declared.contains(&"global") {
         out.push(InstallLocation::Global);
     }
-    if has_repo {
+    if declared.contains(&"git") && has_repo {
         out.push(InstallLocation::Git);
     }
     if declared.contains(&"local") && has_repo {
@@ -1088,6 +949,18 @@ pub fn install_methods_for(meta: &Value) -> Vec<InstallLocation> {
         out.push(InstallLocation::Global);
     }
     out
+}
+
+/// True if the app declares a method that installs into PATH (`global` or `git`).
+pub fn supports_path_install(meta: &Value) -> bool {
+    install_methods_for(meta)
+        .iter()
+        .any(|m| matches!(m, InstallLocation::Global | InstallLocation::Git))
+}
+
+/// True if the app declares the Downloads (clone + build) method.
+pub fn supports_downloads_install(meta: &Value) -> bool {
+    install_methods_for(meta).contains(&InstallLocation::Local)
 }
 
 /// Kick off an install in the background for the chosen location.

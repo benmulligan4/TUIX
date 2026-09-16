@@ -10,7 +10,7 @@
     "crate_name": "sigye",
     "cmd": ["sigye"],
     "pre_installed": true,
-    "install_methods": ["global", "local"],
+    "install_methods": ["global", "git", "local"],
     "default_window_mode": "embedded",
     "supports_embedded": true,
     "approved": true
@@ -26,7 +26,7 @@
     "crate_name": "chess-tui",
     "cmd": ["chess-tui"],
     "pre_installed": false,
-    "install_methods": ["global", "local"],
+    "install_methods": ["global", "git", "local"],
     "default_window_mode": "embedded",
     "supports_embedded": true,
     "approved": true
@@ -42,7 +42,7 @@
     "crate_name": "wordl",
     "cmd": ["wordl"],
     "pre_installed": false,
-    "install_methods": ["global"],
+    "install_methods": ["global", "git"],
     "default_window_mode": "embedded",
     "supports_embedded": true,
     "approved": true

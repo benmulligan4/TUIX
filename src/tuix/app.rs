@@ -1599,18 +1599,19 @@ fn handle_appstore_key(
                 let supports_embed = app_meta
                     .map(|m| app_store::actions::supports_embedded(Some(m)))
                     .unwrap_or(true);
-                let methods: Vec<&str> = app_meta
-                    .and_then(|m| m.get("install_methods"))
-                    .and_then(|v| v.as_array())
-                    .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
-                    .unwrap_or_else(|| vec!["global"]);
+                let supports_local = app_meta
+                    .map(app_store::actions::supports_downloads_install)
+                    .unwrap_or(false);
+                let supports_global = app_meta
+                    .map(app_store::actions::supports_path_install)
+                    .unwrap_or(true);
                 let is_approved = app_meta
                     .and_then(|m| m.get("approved"))
                     .and_then(|v| v.as_bool())
                     .unwrap_or(true);
                 let count = app_store::page::action_count(
                     &status, supports_embed,
-                    methods.contains(&"local"), methods.contains(&"global"),
+                    supports_local, supports_global,
                     is_approved,
                 );
                 match action {
@@ -1703,13 +1704,9 @@ fn handle_appstore_action(
     // Window mode toggle is the last button for installed apps that support embedded
     let supports_embed = app_store::actions::supports_embedded(Some(meta));
     if is_installed && supports_embed {
-        let methods: Vec<&str> = meta.get("install_methods")
-            .and_then(|v| v.as_array())
-            .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
-            .unwrap_or_else(|| vec!["global"]);
         let has_cross_install = match &status {
-            InstallStatus::Global(_) => methods.contains(&"local"),
-            InstallStatus::Local(_) => methods.contains(&"global"),
+            InstallStatus::Global(_) => app_store::actions::supports_downloads_install(meta),
+            InstallStatus::Local(_) => app_store::actions::supports_path_install(meta),
             _ => true,
         };
         let mode_cursor = match &status {
@@ -1755,11 +1752,7 @@ fn handle_appstore_action(
             }
         }
         InstallStatus::Global(path) => {
-            let methods: Vec<&str> = meta.get("install_methods")
-                .and_then(|v| v.as_array())
-                .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
-                .unwrap_or_else(|| vec!["global"]);
-            let has_local_method = methods.contains(&"local");
+            let has_local_method = app_store::actions::supports_downloads_install(meta);
 
             // Buttons: Open Repo(0), Uninstall(1), [Install to Downloads(2) if supported], Open Location
             match cursor {
@@ -1791,11 +1784,7 @@ fn handle_appstore_action(
             }
         }
         InstallStatus::Local(path) => {
-            let methods: Vec<&str> = meta.get("install_methods")
-                .and_then(|v| v.as_array())
-                .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
-                .unwrap_or_else(|| vec!["global"]);
-            let has_global_method = methods.contains(&"global");
+            let has_global_method = app_store::actions::supports_path_install(meta);
 
             match cursor {
                 0 => {
@@ -1869,13 +1858,10 @@ fn handle_appstore_action(
     let is_approved = meta.get("approved").and_then(|v| v.as_bool()).unwrap_or(true);
     if !is_approved && matches!(status, InstallStatus::NotInstalled) {
         let supports_embed = app_store::actions::supports_embedded(Some(meta));
-        let rm_methods: Vec<&str> = meta.get("install_methods")
-            .and_then(|v| v.as_array())
-            .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
-            .unwrap_or_else(|| vec!["global"]);
         let remove_cursor = app_store::page::action_count(
             &status, supports_embed,
-            rm_methods.contains(&"local"), rm_methods.contains(&"global"),
+            app_store::actions::supports_downloads_install(meta),
+            app_store::actions::supports_path_install(meta),
             is_approved,
         ) - 1;
         if ss.right_action_cursor == remove_cursor {
@@ -2379,18 +2365,14 @@ fn run_app() -> bool {
                     let new_supports_embed = new_meta
                         .map(|m| app_store::actions::supports_embedded(Some(m)))
                         .unwrap_or(true);
-                    let new_methods: Vec<&str> = new_meta
-                        .and_then(|m| m.get("install_methods"))
-                        .and_then(|v| v.as_array())
-                        .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
-                        .unwrap_or_else(|| vec!["global"]);
                     let new_approved = new_meta
                         .and_then(|m| m.get("approved"))
                         .and_then(|v| v.as_bool())
                         .unwrap_or(true);
                     let new_count = app_store::page::action_count(
                         &new_status, new_supports_embed,
-                        new_methods.contains(&"local"), new_methods.contains(&"global"),
+                        new_meta.map(app_store::actions::supports_downloads_install).unwrap_or(false),
+                        new_meta.map(app_store::actions::supports_path_install).unwrap_or(true),
                         new_approved,
                     );
                     if state.app_store.right_action_cursor >= new_count {
