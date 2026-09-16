@@ -6,7 +6,7 @@ use ratatui::{
     layout::{Margin, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph},
+    widgets::Paragraph,
     Frame,
 };
 use serde_json::Value;
@@ -21,11 +21,6 @@ pub fn render_browser(
     registered: &HashMap<String, Value>,
     statuses: &HashMap<String, InstallStatus>,
 ) {
-    let right_block = Block::default()
-        .borders(Borders::LEFT)
-        .style(Style::default().fg(Color::DarkGray));
-    frame.render_widget(right_block, area);
-
     let inner = area.inner(Margin { horizontal: 1, vertical: 0 });
 
     if browser.loading {

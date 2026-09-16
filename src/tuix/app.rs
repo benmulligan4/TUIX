@@ -588,7 +588,7 @@ fn render_main(
             "touchscreen" => touchscreen::page::render(frame, area, border_style),
             "system" | "taskmanager" => render_system_page(frame, area, state, border_style, border_type),
             "logs" => render_logs_page(frame, area, state, border_style, border_type),
-            "appstore" => app_store::page::render(frame, area, border_style, &state.app_store, registered_apps),
+            "appstore" => app_store::page::render(frame, area, focused, &state.app_store, registered_apps),
             _ => {}
         }
     } else if state.active_app.is_some() {

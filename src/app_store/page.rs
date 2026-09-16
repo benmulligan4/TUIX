@@ -7,62 +7,124 @@
 use std::collections::HashMap;
 
 use ratatui::{
-    layout::{Alignment, Constraint, Direction, Layout, Margin, Rect},
+    layout::{Constraint, Direction, Layout, Margin, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, Paragraph},
+    widgets::{Block, BorderType, Borders, Clear, Paragraph},
     Frame,
 };
 use serde_json::Value;
 
 use super::state::{AppStoreFocus, AppStoreState, ConfirmAction, InstallStatus};
 
+/// Bordered wrapper that makes it obvious which pane the user is navigating in.
+fn pane_block<'a>(title: &'a str, focused: bool, btype: BorderType, accent: Color) -> Block<'a> {
+    let border_style = if focused {
+        Style::default().fg(accent).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+    let title_style = if focused {
+        Style::default().fg(accent).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+    Block::default()
+        .borders(Borders::ALL)
+        .border_type(btype)
+        .border_style(border_style)
+        .title(title)
+        .title_style(title_style)
+}
+
+/// Add the page name to the right-hand pane, since there is no outer container
+/// border to carry it.
+fn page_label(block: Block<'_>) -> Block<'_> {
+    block.title_top(
+        Line::from(Span::styled(
+            " App Store ",
+            Style::default().fg(Color::DarkGray),
+        ))
+        .right_aligned(),
+    )
+}
+
 pub fn render(
     frame: &mut Frame,
     area: Rect,
-    border_style: Style,
+    page_focused: bool,
     state: &AppStoreState,
     registered: &HashMap<String, Value>,
 ) {
-    let border_name = {
-        let s = crate::settings::persistence::load();
-        crate::settings::persistence::get_str(&s, "appearance.border_style", "Rounded")
-    };
+    let settings = crate::settings::persistence::load();
+    let border_name =
+        crate::settings::persistence::get_str(&settings, "appearance.border_style", "Rounded");
+    let accent_name =
+        crate::settings::persistence::get_str(&settings, "appearance.accent_color", "Cyan");
     let btype = crate::settings::pages::appearance::border_type_from_name(&border_name);
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(btype)
-        .title(" App Store ")
-        .title_alignment(Alignment::Right)
-        .style(border_style);
-    frame.render_widget(block, area);
+    let accent = crate::settings::pages::appearance::color_from_name(&accent_name);
 
-    let inner = area.inner(Margin { horizontal: 1, vertical: 1 });
-
-    // Split main area into left and right panes
+    // No outer container border here — the pane borders are the only frame, so the
+    // App Store does not end up with two nested boxes.
     let panes = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Length(32), Constraint::Fill(1)])
-        .split(inner);
+        .constraints([Constraint::Length(34), Constraint::Fill(1)])
+        .split(area);
 
     let left_area = panes[0];
     let full_right_area = panes[1];
 
-    render_left_pane(frame, left_area, state, registered);
+    let left_focused = page_focused
+        && !state.browser.active
+        && matches!(
+            state.focus,
+            AppStoreFocus::LeftPane
+                | AppStoreFocus::SearchBar
+                | AppStoreFocus::FilterPanel
+                | AppStoreFocus::BrowserButton
+        );
+    let right_focused = page_focused
+        && !state.browser.active
+        && state.focus == AppStoreFocus::RightPane
+        && !state.terminal_focused;
+
+    frame.render_widget(pane_block(" Apps ", left_focused, btype, accent), left_area);
+    render_left_pane(
+        frame,
+        left_area.inner(Margin { horizontal: 1, vertical: 1 }),
+        state,
+        registered,
+    );
 
     // If browser is active, render it in the right pane
     if state.browser.active {
+        frame.render_widget(
+            page_label(pane_block(" Awesome Ratatui ", page_focused, btype, accent)),
+            full_right_area,
+        );
         super::awesome_ratatui_page::render_browser(
-            frame, full_right_area, &state.browser, registered, &state.install_statuses,
+            frame,
+            full_right_area.inner(Margin { horizontal: 1, vertical: 1 }),
+            &state.browser,
+            registered,
+            &state.install_statuses,
         );
     } else if state.terminal_visible {
         let right_sections = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
             .split(full_right_area);
+        frame.render_widget(
+            page_label(pane_block(" Details ", right_focused, btype, accent)),
+            right_sections[0],
+        );
         render_right_pane(frame, right_sections[0], state, registered);
-        render_terminal_panel(frame, right_sections[1], state);
+        render_terminal_panel(frame, right_sections[1], state, btype, accent, page_focused);
     } else {
+        frame.render_widget(
+            page_label(pane_block(" Details ", right_focused, btype, accent)),
+            full_right_area,
+        );
         render_right_pane(frame, full_right_area, state, registered);
     }
 
@@ -304,12 +366,7 @@ fn render_right_pane(
     state: &AppStoreState,
     registered: &HashMap<String, Value>,
 ) {
-    let right_block = Block::default()
-        .borders(Borders::LEFT)
-        .style(Style::default().fg(Color::DarkGray));
-    frame.render_widget(right_block, area);
-
-    let right_inner = area.inner(Margin { horizontal: 2, vertical: 0 });
+    let right_inner = area.inner(Margin { horizontal: 2, vertical: 1 });
 
     let selected_key = match state.selected_app_key() {
         Some(k) => k.clone(),
@@ -643,13 +700,14 @@ fn render_right_pane(
     frame.render_widget(Paragraph::new(visible_lines), right_inner);
 }
 
-fn render_terminal_panel(frame: &mut Frame, area: Rect, state: &AppStoreState) {
-    let border_style = if state.terminal_focused {
-        Style::default().fg(Color::Cyan)
-    } else {
-        Style::default().fg(Color::DarkGray)
-    };
-
+fn render_terminal_panel(
+    frame: &mut Frame,
+    area: Rect,
+    state: &AppStoreState,
+    btype: BorderType,
+    accent: Color,
+    page_focused: bool,
+) {
     let title = if state.operation_running {
         " Terminal Output  [Shift+Tab to scroll] [operation in progress] "
     } else if state.terminal_focused {
@@ -660,11 +718,10 @@ fn render_terminal_panel(frame: &mut Frame, area: Rect, state: &AppStoreState) {
         " Terminal Output  [Shift+Tab to enter] "
     };
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(title)
-        .style(border_style);
-    frame.render_widget(block, area);
+    frame.render_widget(
+        pane_block(title, page_focused && state.terminal_focused, btype, accent),
+        area,
+    );
 
     let inner = area.inner(Margin { horizontal: 1, vertical: 1 });
     let visible_height = inner.height as usize;
