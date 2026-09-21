@@ -1270,71 +1270,47 @@ fn handle_appstore_key(
             Action::Down => { if is_choose && ss.confirm_cursor < max_cursor { ss.confirm_cursor += 1; } }
             Action::Enter => {
                 let confirm = ss.confirm_dialog.take().unwrap();
-                match confirm {
-                    ConfirmAction::UninstallGlobal(ref key) => {
-                        if ss.confirm_cursor == 0 {
-                            let meta = registered_apps.get(key.as_str());
-                            let crate_name = meta
-                                .map(|m| app_store::actions::resolve_package_name(key, m))
-                                .unwrap_or_else(|| key.to_string());
-                            let category = meta.and_then(|m| m.get("category").and_then(|v| v.as_str())).unwrap_or("Other").to_string();
-                            ss.start_operation(key.clone(), false, None);
-                            let output = ss.thread_output.clone();
-                            let done = ss.thread_done.clone();
-                            let key_clone = key.clone();
-                            std::thread::spawn(move || {
-                                app_store::actions::uninstall_global(&crate_name, &mut Vec::new());
-                                app_store::actions::push_output(&output, format!("✓ Uninstalled {} from PATH", key_clone));
-                                app_store::actions::remove_from_config(&key_clone, &category);
-                                done.store(true, std::sync::atomic::Ordering::Relaxed);
-                            });
-                        }
+                // 0=PATH, 1=Downloads, 2=Both for the choose variant; 0=Yes otherwise
+                let (key, remove_global, remove_local) = match &confirm {
+                    ConfirmAction::UninstallGlobal(key) if ss.confirm_cursor == 0 => {
+                        (Some(key.clone()), true, false)
                     }
-                    ConfirmAction::UninstallLocal(ref key) => {
-                        if ss.confirm_cursor == 0 {
-                            let meta = registered_apps.get(key.as_str());
-                            let category = meta.and_then(|m| m.get("category").and_then(|v| v.as_str())).unwrap_or("Other").to_string();
-                            ss.start_operation(key.clone(), false, None);
-                            let output = ss.thread_output.clone();
-                            let done = ss.thread_done.clone();
-                            let key_clone = key.clone();
-                            let cat = category.clone();
-                            std::thread::spawn(move || {
-                                app_store::actions::uninstall_local(&key_clone, &cat, &mut Vec::new());
-                                app_store::actions::push_output(&output, format!("✓ Uninstalled {} from Downloads", key_clone));
-                                app_store::actions::remove_from_config(&key_clone, &category);
-                                done.store(true, std::sync::atomic::Ordering::Relaxed);
-                            });
-                        }
+                    ConfirmAction::UninstallLocal(key) if ss.confirm_cursor == 0 => {
+                        (Some(key.clone()), false, true)
                     }
-                    ConfirmAction::UninstallChoose(ref key) => {
-                        // 0=PATH, 1=Downloads, 2=Both, 3=Cancel
-                        if ss.confirm_cursor <= 2 {
-                            let meta = registered_apps.get(key.as_str());
-                            let crate_name = meta
-                                .map(|m| app_store::actions::resolve_package_name(key, m))
-                                .unwrap_or_else(|| key.to_string());
-                            let category = meta.and_then(|m| m.get("category").and_then(|v| v.as_str())).unwrap_or("Other").to_string();
-                            ss.start_operation(key.clone(), false, None);
-                            let output = ss.thread_output.clone();
-                            let done = ss.thread_done.clone();
-                            let key_clone = key.clone();
-                            let choice = ss.confirm_cursor;
-                            let cat = category.clone();
-                            std::thread::spawn(move || {
-                                if choice == 0 || choice == 2 {
-                                    app_store::actions::uninstall_global(&crate_name, &mut Vec::new());
-                                    app_store::actions::push_output(&output, format!("✓ Uninstalled {} from PATH", key_clone));
-                                }
-                                if choice == 1 || choice == 2 {
-                                    app_store::actions::uninstall_local(&key_clone, &cat, &mut Vec::new());
-                                    app_store::actions::push_output(&output, format!("✓ Uninstalled {} from Downloads", key_clone));
-                                }
-                                app_store::actions::remove_from_config(&key_clone, &category);
-                                done.store(true, std::sync::atomic::Ordering::Relaxed);
-                            });
-                        }
-                    }
+                    ConfirmAction::UninstallChoose(key) if ss.confirm_cursor <= 2 => (
+                        Some(key.clone()),
+                        ss.confirm_cursor == 0 || ss.confirm_cursor == 2,
+                        ss.confirm_cursor == 1 || ss.confirm_cursor == 2,
+                    ),
+                    _ => (None, false, false),
+                };
+
+                if let Some(key) = key {
+                    let meta = registered_apps.get(key.as_str());
+                    let package = meta
+                        .map(|m| app_store::actions::resolve_package_name(&key, m))
+                        .unwrap_or_else(|| key.clone());
+                    let candidates = meta
+                        .map(|m| app_store::actions::binary_candidates(&key, m))
+                        .unwrap_or_default();
+                    let category = meta
+                        .and_then(|m| m.get("category").and_then(|v| v.as_str()))
+                        .unwrap_or("Other")
+                        .to_string();
+
+                    ss.start_operation(key.clone(), false, None);
+                    app_store::actions::spawn_uninstall(
+                        &key,
+                        &package,
+                        &category,
+                        candidates,
+                        remove_global,
+                        remove_local,
+                        ss.thread_output.clone(),
+                        ss.thread_done.clone(),
+                        ss.thread_warning.clone(),
+                    );
                 }
                 ss.confirm_cursor = 0;
             }
@@ -1617,10 +1593,10 @@ fn handle_appstore_key(
                 );
                 match action {
                     Action::Up => {
+                        // The top action is the ceiling — don't drop into the
+                        // unhighlighted scroll mode and appear to lose the cursor.
                         if ss.right_action_cursor > 0 {
                             ss.right_action_cursor -= 1;
-                        } else {
-                            ss.in_right_actions = false;
                         }
                     }
                     Action::Down => {
@@ -2347,7 +2323,20 @@ fn run_app() -> bool {
                             state.app_store.failed_installs.insert(key.to_string());
                         }
                     } else {
-                        state.popup = Some((format!("Uninstalled {}", key), Instant::now()));
+                        let locked_warning = state
+                            .app_store
+                            .thread_warning
+                            .lock()
+                            .ok()
+                            .and_then(|w| w.clone());
+                        match locked_warning {
+                            Some(msg) => {
+                                state.popup = Some((msg, Instant::now()));
+                            }
+                            None => {
+                                state.popup = Some((format!("Uninstalled {}", key), Instant::now()));
+                            }
+                        }
                         // If uninstalled source was the active run source, switch to the remaining one
                         let current_source = app_store::actions::get_run_source(key);
                         let new_status_check = app_store::actions::get_install_status(
@@ -2471,18 +2460,33 @@ fn run_app() -> bool {
 
                 // 4. Draw popup notification if active
                 if let Some((ref msg, ref created)) = state.popup {
-                    if created.elapsed() < Duration::from_secs(3) {
-                        let popup_width = (msg.len() + 4) as u16;
+                    // Longer messages need longer on screen to be readable
+                    let secs = 3 + (msg.chars().count() as u64 / 40).min(7);
+                    if created.elapsed() < Duration::from_secs(secs) {
                         let area = frame.area();
+                        let max_width = area.width.saturating_sub(8).max(24);
+                        let lines = app_store::page::wrap_text(msg, max_width.saturating_sub(4) as usize);
+                        let text_width = lines
+                            .iter()
+                            .map(|l| l.chars().count())
+                            .max()
+                            .unwrap_or(0) as u16;
+                        let popup_width = (text_width + 4).min(max_width);
+                        let popup_height = (lines.len() as u16 + 2).min(area.height);
                         let popup_rect = Rect {
                             x: area.width.saturating_sub(popup_width) / 2,
-                            y: area.height / 2,
-                            width: popup_width.min(area.width),
-                            height: 3,
+                            y: area.height.saturating_sub(popup_height) / 2,
+                            width: popup_width,
+                            height: popup_height,
                         };
+                        let body = lines
+                            .iter()
+                            .map(|l| format!("  {}", l))
+                            .collect::<Vec<_>>()
+                            .join("\n");
                         frame.render_widget(Clear, popup_rect);
                         frame.render_widget(
-                            Paragraph::new(Text::raw(format!("  {}  ", msg)))
+                            Paragraph::new(Text::raw(body))
                                 .style(Style::default().fg(Color::White).bg(Color::DarkGray))
                                 .block(Block::default().borders(Borders::ALL).style(Style::default().bg(Color::DarkGray))),
                             popup_rect,

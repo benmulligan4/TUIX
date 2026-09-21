@@ -130,6 +130,9 @@ pub struct AppStoreState {
     pub thread_done: Arc<AtomicBool>,
     /// Signals whether the operation succeeded
     pub thread_success: Arc<AtomicBool>,
+    /// Warning raised by the background operation, e.g. files left behind because
+    /// they were still in use. Shown as a popup when the operation finishes.
+    pub thread_warning: Arc<Mutex<Option<String>>>,
     /// The install location used for the current operation (for post-install config update)
     pub pending_install_location: Option<InstallLocation>,
     /// The app key for the current background operation
@@ -182,6 +185,7 @@ impl AppStoreState {
             thread_output: Arc::new(Mutex::new(Vec::new())),
             thread_done: Arc::new(AtomicBool::new(false)),
             thread_success: Arc::new(AtomicBool::new(false)),
+            thread_warning: Arc::new(Mutex::new(None)),
             pending_install_location: None,
             pending_op_key: None,
             pending_is_install: false,
@@ -250,6 +254,7 @@ impl AppStoreState {
         self.thread_output = Arc::new(Mutex::new(Vec::new()));
         self.thread_done = Arc::new(AtomicBool::new(false));
         self.thread_success = Arc::new(AtomicBool::new(false));
+        self.thread_warning = Arc::new(Mutex::new(None));
     }
 
     pub fn reset_right_pane(&mut self) {

@@ -485,57 +485,156 @@ pub fn record_binary_name(app_key: &str, bin_name: &str) {
     ));
 }
 
-/// Uninstall an app globally via `cargo uninstall`.
-pub fn uninstall_global(crate_name: &str, output: &mut Vec<String>) {
-    let cmd_str = format!("cargo uninstall {}", crate_name);
-    output.push(format!("$ {}", cmd_str));
-    logging::info(&format!("App Store: uninstalling globally: {}", crate_name));
+/// Result of trying to remove an installed copy of an app.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UninstallOutcome {
+    Removed,
+    /// Some files survived because another process still has them open.
+    Locked(Vec<String>),
+    Failed(String),
+}
 
-    match Command::new("cargo")
-        .args(["uninstall", crate_name])
-        .output()
-    {
-        Ok(result) => {
-            for line in String::from_utf8_lossy(&result.stdout).lines() {
-                output.push(line.to_string());
+/// True if an IO error means "something else is still using this file".
+fn is_locked_error(e: &std::io::Error) -> bool {
+    if let Some(code) = e.raw_os_error() {
+        if cfg!(target_os = "windows") {
+            // ERROR_ACCESS_DENIED / ERROR_SHARING_VIOLATION / ERROR_LOCK_VIOLATION
+            if matches!(code, 5 | 32 | 33) {
+                return true;
             }
-            for line in String::from_utf8_lossy(&result.stderr).lines() {
-                output.push(line.to_string());
-            }
-            if result.status.success() {
-                output.push(format!("Successfully uninstalled {}", crate_name));
-                logging::info(&format!("App Store: {} uninstalled globally", crate_name));
-            } else {
-                output.push(format!("Failed to uninstall {}", crate_name));
-                logging::error(&format!("App Store: failed to uninstall {}", crate_name));
-            }
+        } else if matches!(code, 16 | 26) {
+            // EBUSY / ETXTBSY — the binary is currently executing
+            return true;
         }
+    }
+    matches!(e.kind(), std::io::ErrorKind::PermissionDenied)
+}
+
+/// Delete a tree, continuing past individual failures so as much as possible goes.
+/// `failures` collects what could not be removed.
+fn remove_tree(dir: &Path, failures: &mut Vec<String>, locked: &mut bool) {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
         Err(e) => {
-            output.push(format!("Error: {}", e));
-            logging::error(&format!("App Store: cargo uninstall error: {}", e));
+            if is_locked_error(&e) {
+                *locked = true;
+            }
+            failures.push(dir.to_string_lossy().to_string());
+            return;
         }
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+        if is_dir {
+            remove_tree(&path, failures, locked);
+        } else if let Err(e) = std::fs::remove_file(&path) {
+            if is_locked_error(&e) {
+                *locked = true;
+            }
+            failures.push(path.to_string_lossy().to_string());
+        }
+    }
+
+    if let Err(e) = std::fs::remove_dir(dir) {
+        if is_locked_error(&e) {
+            *locked = true;
+        }
+        failures.push(dir.to_string_lossy().to_string());
     }
 }
 
-/// Uninstall an app locally by removing the downloads directory.
-pub fn uninstall_local(app_key: &str, category: &str, output: &mut Vec<String>) {
+/// Uninstall an app globally via `cargo uninstall`.
+pub fn uninstall_global(
+    package: &str,
+    candidates: &[String],
+    output: &Arc<Mutex<Vec<String>>>,
+) -> UninstallOutcome {
+    logging::info(&format!("App Store: uninstalling {} from PATH", package));
+    let ok = run_streaming("cargo", &["uninstall", package], output);
+    invalidate_install_cache();
+
+    // cargo reports success even when Windows refuses to delete a running exe,
+    // so confirm the binary is actually gone.
+    let leftovers: Vec<String> = candidates
+        .iter()
+        .filter_map(|c| detect_global_install(c))
+        .collect();
+
+    if leftovers.is_empty() {
+        push_output(output, format!("✓ Uninstalled {} from PATH", package));
+        logging::info(&format!("App Store: {} removed from PATH", package));
+        return UninstallOutcome::Removed;
+    }
+
+    if ok {
+        logging::error(&format!(
+            "App Store: {} still present after uninstall: {:?}",
+            package, leftovers
+        ));
+        UninstallOutcome::Locked(leftovers)
+    } else {
+        let msg = format!("cargo uninstall {} failed", package);
+        logging::error(&format!("App Store: {}", msg));
+        UninstallOutcome::Failed(msg)
+    }
+}
+
+/// Uninstall an app locally by removing its downloads directory.
+pub fn uninstall_local(
+    app_key: &str,
+    category: &str,
+    output: &Arc<Mutex<Vec<String>>>,
+) -> UninstallOutcome {
     let subdir = if category == "Dashboard" { "dashboards" } else { "applications" };
     let target_dir = downloads_dir().join(subdir).join(app_key);
-    let target_dir = target_dir.to_string_lossy().to_string();
 
-    output.push(format!("Removing directory: {}", target_dir));
-    logging::info(&format!("App Store: removing local install: {}", target_dir));
-
-    match std::fs::remove_dir_all(&target_dir) {
-        Ok(_) => {
-            output.push(format!("Successfully removed {}", target_dir));
-            logging::info(&format!("App Store: {} removed locally", app_key));
-        }
-        Err(e) => {
-            output.push(format!("Error removing {}: {}", target_dir, e));
-            logging::error(&format!("App Store: failed to remove {}: {}", target_dir, e));
-        }
+    if !target_dir.exists() {
+        return UninstallOutcome::Removed;
     }
+
+    push_output(output, format!("Removing directory: {}", target_dir.display()));
+    logging::info(&format!(
+        "App Store: removing local install: {}",
+        target_dir.display()
+    ));
+
+    let mut failures: Vec<String> = Vec::new();
+    let mut locked = false;
+    remove_tree(&target_dir, &mut failures, &mut locked);
+
+    if failures.is_empty() {
+        push_output(output, format!("✓ Uninstalled {} from Downloads", app_key));
+        logging::info(&format!("App Store: {} removed locally", app_key));
+        return UninstallOutcome::Removed;
+    }
+
+    logging::error(&format!(
+        "App Store: {} files could not be removed under {} ({} left)",
+        app_key,
+        target_dir.display(),
+        failures.len()
+    ));
+    for f in failures.iter().take(10) {
+        push_output(output, format!("  could not remove: {}", f));
+        logging::error(&format!("App Store: locked file: {}", f));
+    }
+
+    if locked {
+        UninstallOutcome::Locked(failures)
+    } else {
+        UninstallOutcome::Failed(format!("{} files could not be removed", failures.len()))
+    }
+}
+
+/// Message shown when an uninstall left files behind because they were in use.
+pub fn locked_uninstall_message(app_key: &str) -> String {
+    format!(
+        "{} was partly uninstalled — some files are still in use. \
+         Close any running windows of it and restart TUIX to finish removing them.",
+        app_key
+    )
 }
 
 /// Build the `cmd` array for an installed app, using the binary that was
@@ -1266,35 +1365,62 @@ pub fn spawn_install_local(
     });
 }
 
-/// Spawn uninstall_global in a background thread.
-#[allow(dead_code)]
-pub fn spawn_uninstall_global(crate_name: &str, output: Arc<Mutex<Vec<String>>>, done: Arc<AtomicBool>) {
-    let crate_name = crate_name.to_string();
+/// Run an uninstall in the background, removing the PATH copy, the Downloads copy, or both.
+///
+/// `warning` receives a message when files survived because they were still in use,
+/// so the UI can tell the user a restart is needed.
+pub fn spawn_uninstall(
+    app_key: &str,
+    package: &str,
+    category: &str,
+    candidates: Vec<String>,
+    remove_global: bool,
+    remove_local: bool,
+    output: Arc<Mutex<Vec<String>>>,
+    done: Arc<AtomicBool>,
+    warning: Arc<Mutex<Option<String>>>,
+) {
+    let app_key = app_key.to_string();
+    let package = package.to_string();
+    let category = category.to_string();
+
     thread::spawn(move || {
-        let ok = run_streaming("cargo", &["uninstall", &crate_name], &output);
-        if ok {
-            push_output(&output, format!("✓ Successfully uninstalled {}", crate_name));
-        } else {
-            push_output(&output, format!("✗ Failed to uninstall {}", crate_name));
+        let mut any_locked = false;
+
+        if remove_global {
+            match uninstall_global(&package, &candidates, &output) {
+                UninstallOutcome::Locked(_) => any_locked = true,
+                UninstallOutcome::Failed(msg) => {
+                    push_output(&output, format!("✗ {}", msg));
+                }
+                UninstallOutcome::Removed => {}
+            }
         }
+
+        if remove_local {
+            match uninstall_local(&app_key, &category, &output) {
+                UninstallOutcome::Locked(_) => any_locked = true,
+                UninstallOutcome::Failed(msg) => {
+                    push_output(&output, format!("✗ {}", msg));
+                }
+                UninstallOutcome::Removed => {}
+            }
+        }
+
+        if any_locked {
+            let msg = locked_uninstall_message(&app_key);
+            push_output(&output, String::new());
+            push_output(&output, format!("⚠ {}", msg));
+            logging::error(&format!("App Store: {}", msg));
+            if let Ok(mut w) = warning.lock() {
+                *w = Some(msg);
+            }
+        }
+
+        // Config is rebuilt from what is actually on disk, so leftovers stay listed
+        remove_from_config(&app_key, &category);
         invalidate_install_cache();
         done.store(true, Ordering::Relaxed);
     });
 }
 
-/// Spawn uninstall_local in a background thread.
-#[allow(dead_code)]
-pub fn spawn_uninstall_local(app_key: &str, category: &str, output: Arc<Mutex<Vec<String>>>, done: Arc<AtomicBool>) {
-    let app_key = app_key.to_string();
-    let category = category.to_string();
-    thread::spawn(move || {
-        let subdir = if category == "Dashboard" { "dashboards" } else { "applications" };
-        let target_dir = downloads_dir().join(subdir).join(&app_key).to_string_lossy().to_string();
-        push_output(&output, format!("Removing directory: {}", target_dir));
-        match std::fs::remove_dir_all(&target_dir) {
-            Ok(_) => push_output(&output, format!("✓ Successfully removed {}", target_dir)),
-            Err(e) => push_output(&output, format!("✗ Error removing {}: {}", target_dir, e)),
-        }
-        done.store(true, Ordering::Relaxed);
-    });
-}
