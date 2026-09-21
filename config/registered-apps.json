@@ -1,50 +1,117 @@
 {
-  "sigye": {
-    "label": "Sigye — Terminal Clock",
-    "description": "A feature-rich terminal clock with ASCII art fonts, animated backgrounds, and productivity timers. 6 display modes including Clock, Pomodoro, Timer, Stopwatch, World Clock, and Countdown. 40+ bundled FIGlet fonts, 18 color themes, 21 animated backgrounds, and desktop notifications.",
-    "category": "Dashboard",
-    "author": "am2rican5",
-    "version": "0.6.0",
-    "license": "MIT",
-    "repository": "https://github.com/am2rican5/sigye",
-    "crate_name": "sigye",
-    "cmd": ["sigye"],
-    "pre_installed": true,
-    "install_methods": ["global", "git", "local"],
+  "tetris-tui": {
+    "approved": false,
+    "author": "Axyl1410",
+    "bin_name": "tetris-tui",
+    "category": "Games",
+    "cmd": [
+      "tetris-tui"
+    ],
+    "crate_name": "tetris-tui",
     "default_window_mode": "embedded",
+    "description": "Terminal Tetris following the Tetris Guideline.",
+    "install_methods": [
+      "global",
+      "git",
+      "local"
+    ],
+    "label": "tetris-tui",
+    "license": "unknown",
+    "pre_installed": false,
+    "repository": "https://github.com/Axyl1410/tetris-tui",
     "supports_embedded": true,
-    "approved": true
+    "version": "unknown"
+  },
+  "wordl-rs": {
+    "approved": false,
+    "author": "palerdot",
+    "bin_name": "wordl",
+    "category": "Games",
+    "cmd": [
+      "wordl"
+    ],
+    "crate_name": "wordl-rs",
+    "default_window_mode": "embedded",
+    "description": "Terminal-based Wordle game. Web like experience with keyboard hints and guess reveal animations.",
+    "install_methods": [
+      "global",
+      "git",
+      "local"
+    ],
+    "label": "wordl",
+    "license": "unknown",
+    "pre_installed": false,
+    "repository": "https://github.com/palerdot/wordl-rs",
+    "supports_embedded": true,
+    "version": "unknown"
+  },
+  "sigye": {
+    "approved": true,
+    "author": "am2rican5",
+    "bin_name": "sigye",
+    "category": "Dashboard",
+    "cmd": [
+      "sigye"
+    ],
+    "crate_name": "sigye",
+    "default_window_mode": "embedded",
+    "description": "A feature-rich terminal clock with ASCII art fonts, animated backgrounds, and productivity timers. 6 display modes including Clock, Pomodoro, Timer, Stopwatch, World Clock, and Countdown. 40+ bundled FIGlet fonts, 18 color themes, 21 animated backgrounds, and desktop notifications.",
+    "install_methods": [
+      "global",
+      "git",
+      "local"
+    ],
+    "label": "Sigye — Terminal Clock",
+    "license": "MIT",
+    "pre_installed": true,
+    "repository": "https://github.com/am2rican5/sigye",
+    "supports_embedded": true,
+    "version": "0.6.0"
   },
   "chess-tui": {
-    "label": "Chess TUI",
-    "description": "A free, open-source terminal chess game. Play with a friend locally, against any UCI chess engine (e.g. Stockfish), or online via Lichess. Features local 2-player mode, engine integration, Lichess multiplayer, helper menu, and custom skins. Runs on macOS, Linux, and Windows.",
-    "category": "Games",
+    "approved": true,
     "author": "thomas-mauran",
-    "version": "2.7.1",
-    "license": "MIT",
-    "repository": "https://github.com/thomas-mauran/chess-tui",
-    "crate_name": "chess-tui",
-    "cmd": ["chess-tui"],
-    "pre_installed": false,
-    "install_methods": ["global", "git", "local"],
-    "default_window_mode": "embedded",
-    "supports_embedded": true,
-    "approved": true
-  },
-  "wordl": {
-    "label": "Wordl — Terminal Wordle",
-    "description": "Terminal Wordle with web-like GUI experience. Features keyboard hints, slow reveal letter color animations, and a clean interface. Type your guess and press Enter, use Backspace to clear, Ctrl-N for a new game, Esc to quit. Built with Ratatui.",
+    "bin_name": "chess-tui",
     "category": "Games",
-    "author": "palerdot",
-    "version": "0.3.0",
-    "license": "GPL-3.0",
-    "repository": "https://github.com/palerdot/wordl-rs",
-    "crate_name": "wordl",
-    "cmd": ["wordl"],
-    "pre_installed": false,
-    "install_methods": ["global", "git"],
+    "cmd": [
+      "chess-tui"
+    ],
+    "crate_name": "chess-tui",
     "default_window_mode": "embedded",
+    "description": "A free, open-source terminal chess game. Play with a friend locally, against any UCI chess engine (e.g. Stockfish), or online via Lichess. Features local 2-player mode, engine integration, Lichess multiplayer, helper menu, and custom skins. Runs on macOS, Linux, and Windows.",
+    "install_methods": [
+      "global",
+      "git",
+      "local"
+    ],
+    "label": "Chess TUI",
+    "license": "MIT",
+    "pre_installed": false,
+    "repository": "https://github.com/thomas-mauran/chess-tui",
     "supports_embedded": true,
-    "approved": true
+    "version": "2.7.1"
+  },
+  "sxtetris": {
+    "approved": false,
+    "author": "shixinhuang99",
+    "bin_name": "sxtetris",
+    "category": "Games",
+    "cmd": [
+      "sxtetris"
+    ],
+    "crate_name": "sxtetris",
+    "default_window_mode": "embedded",
+    "description": "A terminal Tetris game.",
+    "install_methods": [
+      "global",
+      "git",
+      "local"
+    ],
+    "label": "sxtetris",
+    "license": "unknown",
+    "pre_installed": false,
+    "repository": "https://github.com/shixinhuang99/sxtetris",
+    "supports_embedded": true,
+    "version": "unknown"
   }
 }
