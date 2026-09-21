@@ -229,7 +229,7 @@ fn render_navbar(frame: &mut Frame, area: Rect, nav_items: &[NavItem], state: &T
     }
 }
 
-fn render_dropdown(frame: &mut Frame, area: Rect, nav_items: &[NavItem], state: &TuixState) {
+fn render_dropdown(frame: &mut Frame, area: Rect, nav_items: &[NavItem], state: &TuixState, open_upward: bool) {
     if !state.nav_expanded {
         return;
     }
@@ -260,11 +260,16 @@ fn render_dropdown(frame: &mut Frame, area: Rect, nav_items: &[NavItem], state: 
         dropdown_width = available_width.max(10);
     }
 
+    let dropdown_height = dropdown_height.min(area.height);
     let dropdown_rect = Rect {
         x: area.x + x_offset,
-        y: area.y,
+        y: if open_upward {
+            area.y + area.height - dropdown_height
+        } else {
+            area.y
+        },
         width: dropdown_width,
-        height: dropdown_height.min(area.height),
+        height: dropdown_height,
     };
 
     // Clear the area and draw border
@@ -2428,25 +2433,37 @@ fn run_app() -> bool {
         // Draw UI
         terminal
             .draw(|frame| {
-                let status_bar_on = {
+                let (status_bar_on, navbar_bottom) = {
                     let s = crate::settings::persistence::load();
-                    crate::settings::persistence::get_bool(&s, "appearance.status_bar_enabled", false)
+                    (
+                        crate::settings::persistence::get_bool(&s, "appearance.status_bar_enabled", false),
+                        crate::settings::persistence::get_str(&s, "appearance.navbar_position", "Top") == "Bottom",
+                    )
                 };
-                let constraints: Vec<Constraint> = if status_bar_on {
-                    vec![Constraint::Length(1), Constraint::Fill(1), Constraint::Length(1)]
+                // Row order: navbar and main swap depending on navbar_position; status bar is always last
+                let mut constraints: Vec<Constraint> = if navbar_bottom {
+                    vec![Constraint::Fill(1), Constraint::Length(1)]
                 } else {
                     vec![Constraint::Length(1), Constraint::Fill(1)]
                 };
+                if status_bar_on {
+                    constraints.push(Constraint::Length(1));
+                }
                 let rows = Layout::default()
                     .direction(Direction::Vertical)
                     .constraints(constraints)
                     .split(frame.area());
+                let (nav_row, main_row) = if navbar_bottom {
+                    (rows[1], rows[0])
+                } else {
+                    (rows[0], rows[1])
+                };
 
                 // 1. Draw main container
-                render_main(frame, rows[1], &mut state, &mut active_internal_app, &mut active_installed_dash, &mut active_installed_app, &registered_apps);
+                render_main(frame, main_row, &mut state, &mut active_internal_app, &mut active_installed_dash, &mut active_installed_app, &registered_apps);
 
                 // 2. Draw navbar label row
-                render_navbar(frame, rows[0], &nav_items, &state);
+                render_navbar(frame, nav_row, &nav_items, &state);
 
                 // 3. Draw status bar if enabled
                 if status_bar_on {
@@ -2455,7 +2472,7 @@ fn run_app() -> bool {
 
                 // 4. Draw dropdown LAST (overlays main container)
                 if state.nav_expanded {
-                    render_dropdown(frame, rows[1], &nav_items, &state);
+                    render_dropdown(frame, main_row, &nav_items, &state, navbar_bottom);
                 }
 
                 // 4. Draw popup notification if active

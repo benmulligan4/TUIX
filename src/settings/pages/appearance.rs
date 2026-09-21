@@ -82,6 +82,7 @@ pub fn render(frame: &mut Frame, area: Rect, cursor: usize, _scroll: usize, edit
     let border_style = persistence::get_str(&settings, "appearance.border_style", "Rounded");
     let status_bar = persistence::get_bool(&settings, "appearance.status_bar_enabled", false);
     let keep_open = persistence::get_bool(&settings, "appearance.new_window_keeps_tuix_open", false);
+    let navbar_bottom = persistence::get_str(&settings, "appearance.navbar_position", "Top") == "Bottom";
 
     let items: Vec<(&str, String)> = vec![
         ("TUIX Colour", accent),
@@ -95,6 +96,7 @@ pub fn render(frame: &mut Frame, area: Rect, cursor: usize, _scroll: usize, edit
             "New Window Apps",
             if keep_open { "Keep TUIX open".into() } else { "Close TUIX while running".into() },
         ),
+        ("Navigation Bar", if navbar_bottom { "Bottom".into() } else { "Top".into() }),
     ];
 
     let value_style = Style::default().fg(Color::White);
@@ -131,7 +133,7 @@ pub fn is_edit_mode_item(cursor: usize) -> bool {
     matches!(cursor, 0 | 4 | 5) // TUIX Colour, Default Dashboard, Border Style
 }
 
-pub fn item_count() -> usize { 8 }
+pub fn item_count() -> usize { 9 }
 
 /// Cycle a multi-option item forward (+1) or backward (-1).
 pub fn handle_cycle(cursor: usize, forward: bool) {
@@ -203,6 +205,12 @@ pub fn handle_enter(cursor: usize) {
                 "New window apps: {}",
                 if !current { "TUIX stays open" } else { "TUIX closes while running" }
             ));
+        }
+        8 => {
+            let current = persistence::get_str(&settings, "appearance.navbar_position", "Top");
+            let next = if current == "Bottom" { "Top" } else { "Bottom" };
+            persistence::set(&mut settings, "appearance.navbar_position", serde_json::Value::String(next.to_string()));
+            crate::utilities::logging::settings(&format!("Navigation bar moved to {}", next.to_lowercase()));
         }
         _ => {}
     }

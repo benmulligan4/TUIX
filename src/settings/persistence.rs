@@ -30,7 +30,8 @@ fn settings_path() -> PathBuf {
             "clock_show_seconds": false,
             "border_style": "Rounded",
             "status_bar_enabled": false,
-            "new_window_keeps_tuix_open": false
+            "new_window_keeps_tuix_open": false,
+            "navbar_position": "Top"
         },
         "display": {
             "fullscreen": false
