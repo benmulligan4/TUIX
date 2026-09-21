@@ -81,6 +81,7 @@ pub fn render(frame: &mut Frame, area: Rect, cursor: usize, _scroll: usize, edit
     let default_dash = persistence::get_str(&settings, "default_dashboard", "Dashboard-1");
     let border_style = persistence::get_str(&settings, "appearance.border_style", "Rounded");
     let status_bar = persistence::get_bool(&settings, "appearance.status_bar_enabled", false);
+    let keep_open = persistence::get_bool(&settings, "appearance.new_window_keeps_tuix_open", false);
 
     let items: Vec<(&str, String)> = vec![
         ("TUIX Colour", accent),
@@ -90,6 +91,10 @@ pub fn render(frame: &mut Frame, area: Rect, cursor: usize, _scroll: usize, edit
         ("Default Dashboard", default_dash),
         ("Border Style", border_style),
         ("Status Bar", if status_bar { "Enabled".into() } else { "Disabled".into() }),
+        (
+            "New Window Apps",
+            if keep_open { "Keep TUIX open".into() } else { "Close TUIX while running".into() },
+        ),
     ];
 
     let value_style = Style::default().fg(Color::White);
@@ -126,7 +131,7 @@ pub fn is_edit_mode_item(cursor: usize) -> bool {
     matches!(cursor, 0 | 4 | 5) // TUIX Colour, Default Dashboard, Border Style
 }
 
-pub fn item_count() -> usize { 7 }
+pub fn item_count() -> usize { 8 }
 
 /// Cycle a multi-option item forward (+1) or backward (-1).
 pub fn handle_cycle(cursor: usize, forward: bool) {
@@ -190,6 +195,14 @@ pub fn handle_enter(cursor: usize) {
             let current = persistence::get_bool(&settings, "appearance.status_bar_enabled", false);
             persistence::set(&mut settings, "appearance.status_bar_enabled", serde_json::Value::Bool(!current));
             crate::utilities::logging::settings(&format!("Status bar {}", if !current { "enabled" } else { "disabled" }));
+        }
+        7 => {
+            let current = persistence::get_bool(&settings, "appearance.new_window_keeps_tuix_open", false);
+            persistence::set(&mut settings, "appearance.new_window_keeps_tuix_open", serde_json::Value::Bool(!current));
+            crate::utilities::logging::settings(&format!(
+                "New window apps: {}",
+                if !current { "TUIX stays open" } else { "TUIX closes while running" }
+            ));
         }
         _ => {}
     }

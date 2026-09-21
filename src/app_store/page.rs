@@ -7,58 +7,124 @@
 use std::collections::HashMap;
 
 use ratatui::{
-    layout::{Alignment, Constraint, Direction, Layout, Margin, Rect},
+    layout::{Constraint, Direction, Layout, Margin, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, Paragraph},
+    widgets::{Block, BorderType, Borders, Clear, Paragraph},
     Frame,
 };
 use serde_json::Value;
 
 use super::state::{AppStoreFocus, AppStoreState, ConfirmAction, InstallStatus};
 
+/// Bordered wrapper that makes it obvious which pane the user is navigating in.
+fn pane_block<'a>(title: &'a str, focused: bool, btype: BorderType, accent: Color) -> Block<'a> {
+    let border_style = if focused {
+        Style::default().fg(accent).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+    let title_style = if focused {
+        Style::default().fg(accent).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+    Block::default()
+        .borders(Borders::ALL)
+        .border_type(btype)
+        .border_style(border_style)
+        .title(title)
+        .title_style(title_style)
+}
+
+/// Add the page name to the right-hand pane, since there is no outer container
+/// border to carry it.
+fn page_label(block: Block<'_>) -> Block<'_> {
+    block.title_top(
+        Line::from(Span::styled(
+            " App Store ",
+            Style::default().fg(Color::DarkGray),
+        ))
+        .right_aligned(),
+    )
+}
+
 pub fn render(
     frame: &mut Frame,
     area: Rect,
-    border_style: Style,
+    page_focused: bool,
     state: &AppStoreState,
     registered: &HashMap<String, Value>,
 ) {
-    let border_name = {
-        let s = crate::settings::persistence::load();
-        crate::settings::persistence::get_str(&s, "appearance.border_style", "Rounded")
-    };
+    let settings = crate::settings::persistence::load();
+    let border_name =
+        crate::settings::persistence::get_str(&settings, "appearance.border_style", "Rounded");
+    let accent_name =
+        crate::settings::persistence::get_str(&settings, "appearance.accent_color", "Cyan");
     let btype = crate::settings::pages::appearance::border_type_from_name(&border_name);
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(btype)
-        .title(" App Store ")
-        .title_alignment(Alignment::Right)
-        .style(border_style);
-    frame.render_widget(block, area);
+    let accent = crate::settings::pages::appearance::color_from_name(&accent_name);
 
-    let inner = area.inner(Margin { horizontal: 1, vertical: 1 });
-
-    // Split main area into left and right panes
+    // No outer container border here — the pane borders are the only frame, so the
+    // App Store does not end up with two nested boxes.
     let panes = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Length(32), Constraint::Fill(1)])
-        .split(inner);
+        .constraints([Constraint::Length(34), Constraint::Fill(1)])
+        .split(area);
 
     let left_area = panes[0];
     let full_right_area = panes[1];
 
-    render_left_pane(frame, left_area, state, registered);
+    let left_focused = page_focused
+        && !state.browser.active
+        && matches!(
+            state.focus,
+            AppStoreFocus::LeftPane
+                | AppStoreFocus::SearchBar
+                | AppStoreFocus::FilterPanel
+                | AppStoreFocus::BrowserButton
+        );
+    let right_focused = page_focused
+        && !state.browser.active
+        && state.focus == AppStoreFocus::RightPane
+        && !state.terminal_focused;
 
-    // If terminal visible, split right pane into preview + terminal
-    if state.terminal_visible {
+    frame.render_widget(pane_block(" Apps ", left_focused, btype, accent), left_area);
+    render_left_pane(
+        frame,
+        left_area.inner(Margin { horizontal: 1, vertical: 1 }),
+        state,
+        registered,
+    );
+
+    // If browser is active, render it in the right pane
+    if state.browser.active {
+        frame.render_widget(
+            page_label(pane_block(" Awesome Ratatui ", page_focused, btype, accent)),
+            full_right_area,
+        );
+        super::awesome_ratatui_page::render_browser(
+            frame,
+            full_right_area.inner(Margin { horizontal: 1, vertical: 1 }),
+            &state.browser,
+            registered,
+            &state.install_statuses,
+        );
+    } else if state.terminal_visible {
         let right_sections = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
             .split(full_right_area);
+        frame.render_widget(
+            page_label(pane_block(" Details ", right_focused, btype, accent)),
+            right_sections[0],
+        );
         render_right_pane(frame, right_sections[0], state, registered);
-        render_terminal_panel(frame, right_sections[1], state);
+        render_terminal_panel(frame, right_sections[1], state, btype, accent, page_focused);
     } else {
+        frame.render_widget(
+            page_label(pane_block(" Details ", right_focused, btype, accent)),
+            full_right_area,
+        );
         render_right_pane(frame, full_right_area, state, registered);
     }
 
@@ -79,7 +145,7 @@ fn render_left_pane(
 ) {
     let in_left = matches!(
         state.focus,
-        AppStoreFocus::LeftPane | AppStoreFocus::SearchBar | AppStoreFocus::FilterPanel
+        AppStoreFocus::LeftPane | AppStoreFocus::SearchBar | AppStoreFocus::FilterPanel | AppStoreFocus::BrowserButton
     );
 
     let mut lines: Vec<Line> = Vec::new();
@@ -104,6 +170,23 @@ fn render_left_pane(
         format!(" [/] {}", state.search_query)
     };
     lines.push(Line::from(Span::styled(search_text, search_style)));
+
+    // Awesome Ratatui App Browser button
+    let browser_active = state.browser.active;
+    let browser_btn_focused = state.focus == AppStoreFocus::BrowserButton;
+    let browser_style = if browser_btn_focused {
+        Style::default().fg(Color::Black).bg(Color::Cyan)
+    } else if browser_active {
+        Style::default().fg(Color::Black).bg(Color::Green)
+    } else if in_left {
+        Style::default().fg(Color::Green)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+    lines.push(Line::from(Span::styled(
+        " ✚ Browse Awesome Ratatui",
+        browser_style,
+    )));
 
     // Filter panel toggle
     let panel_focused = state.focus == AppStoreFocus::FilterPanel;
@@ -203,39 +286,71 @@ fn render_left_pane(
     // App list
     let available_rows = area.height as usize;
 
-    for (i, key) in state.computed_app_list.iter().enumerate() {
+    use super::state::LeftRowKind;
+    for (i, row) in state.left_visible_rows.iter().enumerate() {
         if lines.len() >= available_rows {
             break;
         }
 
-        let meta = match registered.get(key.as_str()) {
-            Some(m) => m,
-            None => continue,
-        };
-        let label = meta.get("label").and_then(|v| v.as_str()).unwrap_or(key);
         let is_selected = i == state.left_cursor;
         let in_app_list = state.focus == AppStoreFocus::LeftPane;
 
-        let installed_indicator = match state.install_statuses.get(key.as_str()) {
-            Some(InstallStatus::NotInstalled) | None => " ",
-            _ => "✓",
-        };
+        match row {
+            LeftRowKind::Spacer => {
+                lines.push(Line::from(""));
+            }
+            LeftRowKind::CategoryHeader(cat) => {
+                let collapsed = state.collapsed_store_categories.contains(cat);
+                let arrow = if collapsed { "▶" } else { "▼" };
+                let cat_style = if is_selected && in_app_list {
+                    Style::default().fg(Color::Black).bg(Color::Yellow)
+                } else {
+                    Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+                };
+                lines.push(Line::from(Span::styled(
+                    format!(" {} {}", arrow, cat),
+                    cat_style,
+                )));
+            }
+            LeftRowKind::App(key) => {
+                let meta = match registered.get(key.as_str()) {
+                    Some(m) => m,
+                    None => continue,
+                };
+                let label = meta.get("label").and_then(|v| v.as_str()).unwrap_or(key);
 
-        let prefix = if is_selected && in_app_list { " » " } else { "   " };
-        let text = format!("{}{} {}", prefix, installed_indicator, label);
+                let installed_indicator = match state.install_statuses.get(key.as_str()) {
+                    Some(InstallStatus::NotInstalled) | None => " ",
+                    _ => "✓",
+                };
 
-        let style = if is_selected && in_app_list {
-            Style::default().fg(Color::Black).bg(Color::Cyan)
-        } else if is_selected {
-            Style::default().fg(Color::Cyan)
-        } else {
-            Style::default().fg(Color::White)
-        };
+                let prefix = if is_selected && in_app_list { " » " } else { "   " };
+                let text = format!("{}{} {}", prefix, installed_indicator, label);
 
-        lines.push(Line::from(Span::styled(text, style)));
+                let is_installed = matches!(
+                    state.install_statuses.get(key.as_str()),
+                    Some(s) if !matches!(s, InstallStatus::NotInstalled)
+                );
+                let is_failed = state.failed_installs.contains(key);
+
+                let style = if is_selected && in_app_list {
+                    Style::default().fg(Color::Black).bg(Color::Cyan)
+                } else if is_failed {
+                    Style::default().fg(Color::Red)
+                } else if is_installed {
+                    Style::default().fg(Color::Green)
+                } else if is_selected {
+                    Style::default().fg(Color::Cyan)
+                } else {
+                    Style::default().fg(Color::White)
+                };
+
+                lines.push(Line::from(Span::styled(text, style)));
+            }
+        }
     }
 
-    if state.computed_app_list.is_empty() && lines.len() < available_rows {
+    if state.left_visible_rows.is_empty() && lines.len() < available_rows {
         lines.push(Line::from(Span::styled(
             "   No apps match filters",
             Style::default().fg(Color::DarkGray),
@@ -251,12 +366,7 @@ fn render_right_pane(
     state: &AppStoreState,
     registered: &HashMap<String, Value>,
 ) {
-    let right_block = Block::default()
-        .borders(Borders::LEFT)
-        .style(Style::default().fg(Color::DarkGray));
-    frame.render_widget(right_block, area);
-
-    let right_inner = area.inner(Margin { horizontal: 2, vertical: 0 });
+    let right_inner = area.inner(Margin { horizontal: 2, vertical: 1 });
 
     let selected_key = match state.selected_app_key() {
         Some(k) => k.clone(),
@@ -296,10 +406,25 @@ fn render_right_pane(
     let title_style = Style::default().fg(Color::White).add_modifier(Modifier::BOLD);
     let accent_style = Style::default().fg(Color::Cyan);
 
+    let is_approved = meta.get("approved").and_then(|v| v.as_bool()).unwrap_or(true);
+
     let mut lines: Vec<Line> = Vec::new();
 
     // Title
     lines.push(Line::from(Span::styled(label, title_style)));
+
+    // Approved badge or experimental warning
+    if is_approved {
+        lines.push(Line::from(Span::styled(
+            "  ✓ TUIX Approved",
+            Style::default().fg(Color::Green),
+        )));
+    } else {
+        lines.push(Line::from(Span::styled(
+            "  ⚠ Experimental — added from Awesome Ratatui",
+            Style::default().fg(Color::Yellow),
+        )));
+    }
     lines.push(Line::from(""));
 
     // Metadata grid
@@ -338,9 +463,11 @@ fn render_right_pane(
     lines.push(Line::from(""));
 
     // Install status
+    let via_git = super::actions::installed_via_git(&selected_key, category);
+    let path_label = if via_git { "PATH via Git" } else { "PATH" };
     let (status_text, status_color) = match &install_status {
         InstallStatus::NotInstalled => ("Not installed".to_string(), Color::DarkGray),
-        InstallStatus::Global(path) => (format!("Installed to PATH: {}", path), Color::Green),
+        InstallStatus::Global(path) => (format!("Installed to {}: {}", path_label, path), Color::Green),
         InstallStatus::Local(path) => (format!("Installed to Downloads: {}", path), Color::Green),
         InstallStatus::Both(_, _) => ("Installed to Both".to_string(), Color::Green),
     };
@@ -350,9 +477,16 @@ fn render_right_pane(
         Span::styled(&status_text, Style::default().fg(status_color)),
     ]));
 
+    if via_git {
+        lines.push(Line::from(Span::styled(
+            "               (cargo install --git)",
+            Style::default().fg(Color::DarkGray),
+        )));
+    }
+
     if let InstallStatus::Both(g, l) = &install_status {
         lines.push(Line::from(Span::styled(
-            format!("    PATH:      {}", g),
+            format!("    {:<10} {}", format!("{}:", path_label), g),
             Style::default().fg(Color::Green),
         )));
         lines.push(Line::from(Span::styled(
@@ -370,12 +504,8 @@ fn render_right_pane(
     let in_actions = state.focus == AppStoreFocus::RightPane && state.in_right_actions;
     let mut action_idx: usize = 0;
 
-    let install_methods: Vec<&str> = meta.get("install_methods")
-        .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
-        .unwrap_or_else(|| vec!["global"]);
-    let supports_local = install_methods.contains(&"local");
-    let supports_global = install_methods.contains(&"global");
+    let supports_local = super::actions::supports_downloads_install(meta);
+    let supports_global = super::actions::supports_path_install(meta);
 
     // Run button (only for installed apps)
     let is_installed = !matches!(install_status, InstallStatus::NotInstalled);
@@ -522,7 +652,7 @@ fn render_right_pane(
 
         if !supports_embed {
             lines.push(Line::from(Span::styled(
-                "  ⚠ This app only supports fullscreen mode",
+                "  ⚠ This app only supports running in a new window",
                 Style::default().fg(Color::Yellow),
             )));
             lines.push(Line::from(Span::styled(
@@ -531,7 +661,7 @@ fn render_right_pane(
             )));
         } else {
             let current_mode = super::actions::get_window_mode(&selected_key, registered.get(&selected_key));
-            let mode_label = if current_mode == "fullscreen" { "Fullscreen" } else { "TUIX Container" };
+            let mode_label = super::actions::window_mode_label(&current_mode);
             let mode_style = if in_actions && state.right_action_cursor == action_idx {
                 Style::default().fg(Color::Black).bg(Color::Cyan)
             } else {
@@ -542,6 +672,18 @@ fn render_right_pane(
                 mode_style,
             )));
         }
+    }
+
+    // Remove from App Store (only for non-approved, not-installed apps)
+    if !is_approved && !is_installed {
+        action_idx += 1;
+        let remove_style = if in_actions && state.right_action_cursor == action_idx {
+            Style::default().fg(Color::Black).bg(Color::Cyan)
+        } else {
+            Style::default().fg(Color::Red)
+        };
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled("  [ Remove from App Store ]", remove_style)));
     }
 
     // Apply scroll offset
@@ -558,28 +700,28 @@ fn render_right_pane(
     frame.render_widget(Paragraph::new(visible_lines), right_inner);
 }
 
-fn render_terminal_panel(frame: &mut Frame, area: Rect, state: &AppStoreState) {
-    let border_style = if state.terminal_focused {
-        Style::default().fg(Color::Cyan)
-    } else {
-        Style::default().fg(Color::DarkGray)
-    };
-
+fn render_terminal_panel(
+    frame: &mut Frame,
+    area: Rect,
+    state: &AppStoreState,
+    btype: BorderType,
+    accent: Color,
+    page_focused: bool,
+) {
     let title = if state.operation_running {
-        " Terminal Output  [UI Locked — operation in progress] "
+        " Terminal Output  [Shift+Tab to scroll] [operation in progress] "
     } else if state.terminal_focused {
-        " Terminal Output  [Shift+Tab to exit] [Q to close] "
+        " Terminal Output  [Q to exit] [Shift+C to close] "
     } else if !state.terminal_output.is_empty() {
-        " Terminal Output  [Shift+Tab to enter] [Q to close] "
+        " Terminal Output  [Shift+Tab to enter] [Shift+C to close] "
     } else {
         " Terminal Output  [Shift+Tab to enter] "
     };
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(title)
-        .style(border_style);
-    frame.render_widget(block, area);
+    frame.render_widget(
+        pane_block(title, page_focused && state.terminal_focused, btype, accent),
+        area,
+    );
 
     let inner = area.inner(Margin { horizontal: 1, vertical: 1 });
     let visible_height = inner.height as usize;
@@ -715,8 +857,17 @@ fn render_confirm_dialog(frame: &mut Frame, area: Rect, state: &AppStoreState) {
 }
 
 fn render_install_location_dialog(frame: &mut Frame, area: Rect, state: &AppStoreState) {
-    let width = 50u16.min(area.width);
-    let height = (state.available_install_methods.len() as u16 + 4).min(area.height);
+    let width = 56u16.min(area.width);
+    let inner_width = width.saturating_sub(4) as usize;
+
+    let note_lines: Vec<String> = state
+        .install_dialog_note
+        .as_deref()
+        .map(|n| wrap_text(n, inner_width))
+        .unwrap_or_default();
+
+    let height =
+        (state.available_install_methods.len() as u16 + note_lines.len() as u16 + 5).min(area.height);
 
     let popup_rect = Rect {
         x: area.x + (area.width.saturating_sub(width)) / 2,
@@ -735,13 +886,21 @@ fn render_install_location_dialog(frame: &mut Frame, area: Rect, state: &AppStor
 
     let inner = popup_rect.inner(Margin { horizontal: 1, vertical: 1 });
 
-    let mut lines = vec![
-        Line::from(Span::styled(
-            "  Where would you like to install?",
-            Style::default().fg(Color::White),
-        )),
-        Line::from(""),
-    ];
+    let mut lines: Vec<Line> = Vec::new();
+    for note in &note_lines {
+        lines.push(Line::from(Span::styled(
+            format!("  {}", note),
+            Style::default().fg(Color::Green),
+        )));
+    }
+    if !note_lines.is_empty() {
+        lines.push(Line::from(""));
+    }
+    lines.push(Line::from(Span::styled(
+        "  Where would you like to install?",
+        Style::default().fg(Color::White),
+    )));
+    lines.push(Line::from(""));
 
     for (i, method) in state.available_install_methods.iter().enumerate() {
         let style = if i == state.install_location_cursor {
@@ -760,7 +919,7 @@ fn render_install_location_dialog(frame: &mut Frame, area: Rect, state: &AppStor
 }
 
 /// Simple word-wrap helper.
-fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
+pub fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
     if max_width == 0 {
         return vec![text.to_string()];
     }
@@ -786,19 +945,19 @@ fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
 }
 
 /// Get the number of action buttons for the current app's install status.
-pub fn action_count(status: &InstallStatus, supports_embed: bool, supports_local: bool, supports_global: bool) -> usize {
+pub fn action_count(status: &InstallStatus, supports_embed: bool, supports_local: bool, supports_global: bool, is_approved: bool) -> usize {
     let run_btn = if matches!(status, InstallStatus::NotInstalled) { 0 } else { 1 };
     let mode_btn = if !matches!(status, InstallStatus::NotInstalled) && supports_embed { 1 } else { 0 };
+    let remove_btn = if !is_approved && matches!(status, InstallStatus::NotInstalled) { 1 } else { 0 };
     let base = match status {
         InstallStatus::NotInstalled => 2,  // Open Repo, Install
         InstallStatus::Global(_) => {
-            // Open Repo, Uninstall, (Install to Downloads if supported), Open Location
             if supports_local { 4 } else { 3 }
         }
         InstallStatus::Local(_) => {
             if supports_global { 4 } else { 3 }
         }
-        InstallStatus::Both(_, _) => 5,    // Open Repo, Uninstall, Set Source, Open PATH, Open Downloads
+        InstallStatus::Both(_, _) => 5,
     };
-    run_btn + base + mode_btn
+    run_btn + base + mode_btn + remove_btn
 }
