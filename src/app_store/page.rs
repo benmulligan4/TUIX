@@ -328,9 +328,9 @@ fn render_left_pane(
                 let collapsed = state.collapsed_store_categories.contains(cat);
                 let arrow = if collapsed { "▶" } else { "▼" };
                 let cat_style = if is_selected && in_app_list {
-                    Style::default().fg(Color::Black).bg(Color::LightYellow)
+                    Style::default().fg(Color::Black).bg(Color::Yellow)
                 } else {
-                    Style::default().fg(Color::LightYellow).add_modifier(Modifier::BOLD)
+                    Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
                 };
                 lines.push(Line::from(Span::styled(
                     format!(" {} {}", arrow, cat),
@@ -366,7 +366,7 @@ fn render_left_pane(
                 let style = if is_selected && in_app_list {
                     Style::default().fg(Color::Black).bg(Color::Cyan)
                 } else if queued {
-                    Style::default().fg(Color::LightYellow)
+                    Style::default().fg(Color::Yellow)
                 } else if is_failed {
                     Style::default().fg(Color::Red)
                 } else if is_installed {
@@ -454,7 +454,7 @@ fn render_right_pane(
     } else {
         lines.push(Line::from(Span::styled(
             "  ⚠ Experimental — added from Awesome Ratatui",
-            Style::default().fg(Color::LightYellow),
+            Style::default().fg(Color::Yellow),
         )));
     }
     lines.push(Line::from(""));
@@ -622,11 +622,11 @@ fn render_right_pane(
             let current_source = super::actions::get_run_source(&selected_key);
             let source_label = if current_source == "local" { "Downloads" } else { "PATH" };
             let source_text = format!("  [ Default Source: {} — press to switch ]", source_label);
-            push_action!(source_text, Style::default().fg(Color::LightYellow));
+            push_action!(source_text, Style::default().fg(Color::Yellow));
             if current_source == "local" {
                 lines.push(Line::from(Span::styled(
                     "    ⚠ Downloads source is experimental",
-                    Style::default().fg(Color::LightYellow),
+                    Style::default().fg(Color::Yellow),
                 )));
             }
             action_idx += 1;
@@ -647,7 +647,7 @@ fn render_right_pane(
         if !supports_embed {
             lines.push(Line::from(Span::styled(
                 "  ⚠ This app only supports running in a new window",
-                Style::default().fg(Color::LightYellow),
+                Style::default().fg(Color::Yellow),
             )));
             lines.push(Line::from(Span::styled(
                 "    (running inside TUIX is not supported yet)",
@@ -657,7 +657,7 @@ fn render_right_pane(
             let current_mode = super::actions::get_window_mode(&selected_key, registered.get(&selected_key));
             let mode_label = super::actions::window_mode_label(&current_mode);
             let mode_text = format!("  [ Window Mode: {} — press to switch ]", mode_label);
-            push_action!(mode_text, Style::default().fg(Color::LightYellow));
+            push_action!(mode_text, Style::default().fg(Color::Yellow));
         }
     }
 
@@ -795,7 +795,7 @@ fn log_color(line: &str) -> Color {
     } else if t.starts_with('✓') {
         Color::Green
     } else if t.starts_with('⚠') || t.starts_with("warning") {
-        Color::LightYellow
+        Color::Yellow
     } else {
         Color::White
     }
@@ -837,7 +837,7 @@ fn render_queue_panel(
         )));
     } else {
         footer.push(Line::from(Span::styled(
-            " Shift+Tab or D to enter",
+            " Shift+Tab to enter",
             hint_style,
         )));
     }
@@ -860,7 +860,7 @@ fn render_queue_panel(
         }
         let base = match item.status {
             QueueStatus::Pending => Color::Gray,
-            QueueStatus::Running => Color::LightYellow,
+            QueueStatus::Running => Color::Yellow,
             QueueStatus::Done => Color::Green,
             QueueStatus::Failed => Color::Red,
         };
@@ -967,7 +967,7 @@ fn render_confirm_dialog(frame: &mut Frame, area: Rect, state: &AppStoreState) {
         ConfirmAction::ClearQueue => (
             " Clear Install Queue ",
             "Clear finished jobs and cancel everything still pending?".to_string(),
-            Color::LightYellow,
+            Color::Yellow,
         ),
         ConfirmAction::UninstallChoose(n) => {
             (" Uninstall ", format!("Uninstall {} from:", n), Color::Red)

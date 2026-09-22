@@ -28,7 +28,7 @@ pub fn render(frame: &mut Frame, area: Rect, cursor: usize, _scroll: usize, awai
     let prefix = if cursor == 0 { "  » " } else { "    " };
     let style = if cursor == 0 {
         if awaiting_key {
-            Style::default().fg(Color::Black).bg(Color::LightYellow)
+            Style::default().fg(Color::Black).bg(Color::Yellow)
         } else {
             Style::default().fg(Color::Black).bg(Color::Cyan)
         }

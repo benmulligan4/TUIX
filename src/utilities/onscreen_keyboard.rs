@@ -305,7 +305,7 @@ impl OnScreenKeyboard {
                 } else {
                     match key {
                         OskKey::Char(_) => (Color::White, Color::Indexed(236)),
-                        _ => (Color::LightYellow, Color::Indexed(236)),
+                        _ => (Color::Yellow, Color::Indexed(236)),
                     }
                 };
 
