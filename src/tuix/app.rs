@@ -1331,6 +1331,29 @@ fn handle_appstore_key(
             Action::Down => { if is_choose && ss.confirm_cursor < max_cursor { ss.confirm_cursor += 1; } }
             Action::Enter => {
                 let confirm = ss.confirm_dialog.take().unwrap();
+
+                if matches!(confirm, ConfirmAction::ClearQueue) {
+                    if ss.confirm_cursor == 0 {
+                        let cleared = ss.queue.clear_finished();
+                        let pending = ss.queue.cancel_all_pending();
+                        ss.viewing_item = None;
+                        ss.queue.item_focused = false;
+                        if ss.queue.is_empty() {
+                            ss.focus = AppStoreFocus::RightPane;
+                            ss.in_right_actions = true;
+                        }
+                        state.popup = Some((
+                            format!(
+                                "Cleared {} finished job(s), cancelled {} pending",
+                                cleared, pending
+                            ),
+                            Instant::now(),
+                        ));
+                    }
+                    state.app_store.confirm_cursor = 0;
+                    return;
+                }
+
                 // 0=PATH, 1=Downloads, 2=Both for the choose variant; 0=Yes otherwise
                 let (key, remove_global, remove_local) = match &confirm {
                     ConfirmAction::UninstallGlobal(key) if ss.confirm_cursor == 0 => {
@@ -1594,6 +1617,7 @@ fn handle_appstore_key(
                             ss.focus = AppStoreFocus::RightPane;
                             ss.in_right_actions = true;
                             ss.right_action_cursor = 0;
+                            ss.right_scroll = 0;
                         }
                         _ => {}
                     }
@@ -1637,15 +1661,19 @@ fn handle_appstore_key(
                 );
                 match action {
                     Action::Up => {
-                        // The top action is the ceiling — don't drop into the
-                        // unhighlighted scroll mode and appear to lose the cursor.
+                        // The top action is the ceiling; scroll the details instead
+                        // so the metadata above it can still be read.
                         if ss.right_action_cursor > 0 {
                             ss.right_action_cursor -= 1;
+                            ss.ensure_action_visible();
+                        } else if ss.right_scroll > 0 {
+                            ss.right_scroll -= 1;
                         }
                     }
                     Action::Down => {
                         if ss.right_action_cursor < count.saturating_sub(1) {
                             ss.right_action_cursor += 1;
+                            ss.ensure_action_visible();
                         } else if ss.terminal_visible() {
                             // Past the last action, drop into the terminal below
                             ss.focus = AppStoreFocus::Terminal;
@@ -1717,24 +1745,44 @@ fn handle_appstore_key(
             }
         }
         AppStoreFocus::Queue => {
+            let item_focused = ss.queue.item_focused;
             match action {
                 Action::Up => {
-                    if ss.queue.cursor > 0 {
+                    if item_focused {
+                        ss.queue.move_item(ss.queue.cursor, true);
+                    } else if ss.queue.cursor > 0 {
                         ss.queue.cursor -= 1;
+                    } else {
+                        ss.focus = AppStoreFocus::RightPane;
+                        ss.in_right_actions = true;
+                        ss.ensure_action_visible();
                     }
                 }
                 Action::Down => {
-                    if ss.queue.cursor + 1 < ss.queue.items.len() {
+                    if item_focused {
+                        ss.queue.move_item(ss.queue.cursor, false);
+                    } else if ss.queue.cursor + 1 < ss.queue.items.len() {
                         ss.queue.cursor += 1;
                     }
                 }
-                Action::Left => {
-                    ss.focus = AppStoreFocus::Terminal;
+                Action::Left | Action::Back => {
+                    if item_focused {
+                        ss.queue.item_focused = false;
+                    } else if action == Action::Left {
+                        ss.focus = AppStoreFocus::Terminal;
+                    } else {
+                        ss.focus = AppStoreFocus::RightPane;
+                        ss.in_right_actions = true;
+                    }
                 }
                 Action::Enter => {
-                    // Pin the terminal to this job's log, or unpin when it is the
-                    // one already being followed.
-                    if let Some(item) = ss.queue.selected() {
+                    if !item_focused {
+                        if !ss.queue.items.is_empty() {
+                            ss.queue.item_focused = true;
+                        }
+                    } else if let Some(item) = ss.queue.selected() {
+                        // Pin the terminal to this job's log, or unpin when it is
+                        // the one already being followed.
                         let id = item.id;
                         let running = ss.queue.running().map(|r| r.id) == Some(id);
                         ss.viewing_item = if running || ss.viewing_item == Some(id) {
@@ -1746,10 +1794,6 @@ fn handle_appstore_key(
                         ss.terminal_scroll = 0;
                         ss.focus = AppStoreFocus::Terminal;
                     }
-                }
-                Action::Back => {
-                    ss.focus = AppStoreFocus::RightPane;
-                    ss.in_right_actions = true;
                 }
                 _ => {}
             }
@@ -2945,23 +2989,17 @@ fn run_app() -> bool {
             continue;
         }
 
-        // ---- Intercept: install queue commands ----
+        // ---- Intercept: per-job install queue commands (selected row only) ----
         if state.focus == FocusTarget::Main
             && matches!(state.active_page.as_deref(), Some("appstore"))
             && state.app_store.focus == crate::app_store::state::AppStoreFocus::Queue
+            && state.app_store.queue.item_focused
+            && state.app_store.confirm_dialog.is_none()
+            && !state.app_store.install_location_dialog
         {
-            use crossterm::event::{KeyCode, KeyModifiers};
-            let shift = key_event.modifiers.contains(KeyModifiers::SHIFT);
+            use crossterm::event::KeyCode;
             let cursor = state.app_store.queue.cursor;
             match key_event.code {
-                KeyCode::Up if shift => {
-                    state.app_store.queue.move_item(cursor, true);
-                    continue;
-                }
-                KeyCode::Down if shift => {
-                    state.app_store.queue.move_item(cursor, false);
-                    continue;
-                }
                 KeyCode::Char('c') | KeyCode::Char('C') => {
                     let msg = match state.app_store.queue.cancel(cursor) {
                         Ok(m) | Err(m) => m,
@@ -2974,64 +3012,71 @@ fn run_app() -> bool {
                     let msg = match state.app_store.queue.retry(cursor) {
                         Ok(m) | Err(m) => m,
                     };
+                    state.app_store.queue.item_focused = false;
                     state.popup = Some((msg, Instant::now()));
-                    continue;
-                }
-                KeyCode::Char('x') | KeyCode::Char('X') => {
-                    let cleared = state.app_store.queue.clear_finished();
-                    let pending = state.app_store.queue.cancel_all_pending();
-                    state.app_store.viewing_item = None;
-                    if state.app_store.queue.is_empty() {
-                        state.app_store.focus =
-                            crate::app_store::state::AppStoreFocus::RightPane;
-                        state.app_store.in_right_actions = true;
-                    }
-                    state.popup = Some((
-                        format!(
-                            "Cleared {} finished job(s), cancelled {} pending",
-                            cleared, pending
-                        ),
-                        Instant::now(),
-                    ));
-                    continue;
-                }
-                KeyCode::Char('p') | KeyCode::Char('P') => {
-                    state.app_store.queue.paused = !state.app_store.queue.paused;
-                    let msg = if state.app_store.queue.paused {
-                        "Queue paused — the running job will still finish"
-                    } else {
-                        "Queue resumed"
-                    };
-                    state.popup = Some((msg.to_string(), Instant::now()));
                     continue;
                 }
                 _ => {}
             }
         }
 
+        // ---- Intercept: X asks before clearing the install queue ----
+        if state.focus == FocusTarget::Main
+            && matches!(state.active_page.as_deref(), Some("appstore"))
+            && state.app_store.focus == crate::app_store::state::AppStoreFocus::Queue
+            && state.app_store.confirm_dialog.is_none()
+            && !state.app_store.install_location_dialog
+            && matches!(
+                key_event.code,
+                crossterm::event::KeyCode::Char('x') | crossterm::event::KeyCode::Char('X')
+            )
+        {
+            if state.app_store.queue.is_empty() {
+                state.popup = Some(("The queue is already empty".to_string(), Instant::now()));
+            } else {
+                state.app_store.confirm_dialog =
+                    Some(crate::app_store::state::ConfirmAction::ClearQueue);
+                state.app_store.confirm_cursor = 1;
+            }
+            continue;
+        }
+
+        // ---- Intercept: P pauses/resumes the queue from anywhere in the App Store ----
+        if state.focus == FocusTarget::Main
+            && matches!(state.active_page.as_deref(), Some("appstore"))
+            && state.app_store.queue_visible()
+            && state.app_store.confirm_dialog.is_none()
+            && !state.app_store.install_location_dialog
+            && state.app_store.focus != crate::app_store::state::AppStoreFocus::SearchBar
+            && !(state.app_store.browser.active
+                && state.app_store.browser.focus
+                    == crate::app_store::awesome_ratatui_manager::BrowserFocus::SearchBar)
+            && matches!(
+                key_event.code,
+                crossterm::event::KeyCode::Char('p') | crossterm::event::KeyCode::Char('P')
+            )
+        {
+            state.app_store.queue.paused = !state.app_store.queue.paused;
+            let msg = if state.app_store.queue.paused {
+                "Queue paused — the running job will still finish"
+            } else {
+                "Queue resumed"
+            };
+            state.popup = Some((msg.to_string(), Instant::now()));
+            continue;
+        }
+
         // ---- Intercept: Shift+C clears finished App Store queue jobs ----
         if state.focus == FocusTarget::Main
             && matches!(state.active_page.as_deref(), Some("appstore"))
             && state.app_store.queue_visible()
+            && state.app_store.confirm_dialog.is_none()
             && matches!(key_event.code, crossterm::event::KeyCode::Char('C'))
             && key_event.modifiers.contains(crossterm::event::KeyModifiers::SHIFT)
         {
-            let cleared = state.app_store.queue.clear_finished();
-            state.app_store.viewing_item = None;
-            if state.app_store.queue.is_empty()
-                && matches!(
-                    state.app_store.focus,
-                    crate::app_store::state::AppStoreFocus::Terminal
-                        | crate::app_store::state::AppStoreFocus::Queue
-                )
-            {
-                state.app_store.focus = crate::app_store::state::AppStoreFocus::RightPane;
-                state.app_store.in_right_actions = true;
-            }
-            state.popup = Some((
-                format!("Cleared {} finished job(s)", cleared),
-                Instant::now(),
-            ));
+            state.app_store.confirm_dialog =
+                Some(crate::app_store::state::ConfirmAction::ClearQueue);
+            state.app_store.confirm_cursor = 1;
             continue;
         }
 

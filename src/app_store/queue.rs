@@ -148,6 +148,8 @@ impl QueueItem {
 pub struct InstallQueue {
     pub items: Vec<QueueItem>,
     pub cursor: usize,
+    /// The row at `cursor` is selected and showing its per-job options.
+    pub item_focused: bool,
     /// When paused the current item finishes but nothing new starts.
     pub paused: bool,
     next_id: u64,
@@ -155,7 +157,7 @@ pub struct InstallQueue {
 
 impl InstallQueue {
     pub fn new() -> Self {
-        Self { items: Vec::new(), cursor: 0, paused: false, next_id: 1 }
+        Self { items: Vec::new(), cursor: 0, item_focused: false, paused: false, next_id: 1 }
     }
 
     /// Queue a job, or explain why it clashes with something already queued.
@@ -320,21 +322,30 @@ impl InstallQueue {
         Ok(format!("Re-queued {} {}", op.verb().to_lowercase(), label))
     }
 
-    /// Reorder within the pending block. Running and finished items never move.
-    pub fn move_item(&mut self, index: usize, up: bool) -> bool {
+    /// Reorder within the pending block. A job can never be moved above the one
+    /// that is running, or above anything that has already finished.
+    pub fn can_move(&self, index: usize, up: bool) -> bool {
         if self.items.get(index).map(|i| i.status) != Some(QueueStatus::Pending) {
             return false;
         }
         let other = if up {
-            if index == 0 { return false; }
-            index - 1
-        } else {
-            if index + 1 >= self.items.len() { return false; }
+            match index.checked_sub(1) {
+                Some(o) => o,
+                None => return false,
+            }
+        } else if index + 1 < self.items.len() {
             index + 1
+        } else {
+            return false;
         };
-        if self.items[other].status != QueueStatus::Pending {
+        self.items[other].status == QueueStatus::Pending
+    }
+
+    pub fn move_item(&mut self, index: usize, up: bool) -> bool {
+        if !self.can_move(index, up) {
             return false;
         }
+        let other = if up { index - 1 } else { index + 1 };
         self.items.swap(index, other);
         self.cursor = other;
         true
@@ -343,6 +354,7 @@ impl InstallQueue {
     pub fn clamp_cursor(&mut self) {
         if self.items.is_empty() {
             self.cursor = 0;
+            self.item_focused = false;
         } else if self.cursor >= self.items.len() {
             self.cursor = self.items.len() - 1;
         }

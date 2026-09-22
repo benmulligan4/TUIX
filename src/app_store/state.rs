@@ -68,6 +68,7 @@ pub enum ConfirmAction {
     UninstallGlobal(String),
     UninstallLocal(String),
     UninstallChoose(String),
+    ClearQueue,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -129,6 +130,11 @@ pub struct AppStoreState {
     pub install_statuses: HashMap<String, InstallStatus>,
     pub right_action_cursor: usize,
     pub in_right_actions: bool,
+    /// Details pane geometry recorded by the renderer, so key handling can keep
+    /// the focused action button on screen.
+    pub right_action_lines: std::cell::RefCell<Vec<usize>>,
+    pub right_view_height: std::cell::Cell<usize>,
+    pub right_total_lines: std::cell::Cell<usize>,
     /// Shared output buffer for background install/uninstall thread
     pub thread_output: Arc<Mutex<Vec<String>>>,
     /// Signals that the background operation has completed
@@ -181,6 +187,9 @@ impl AppStoreState {
             install_statuses: HashMap::new(),
             right_action_cursor: 0,
             in_right_actions: false,
+            right_action_lines: std::cell::RefCell::new(Vec::new()),
+            right_view_height: std::cell::Cell::new(20),
+            right_total_lines: std::cell::Cell::new(0),
             thread_output: Arc::new(Mutex::new(Vec::new())),
             thread_done: Arc::new(AtomicBool::new(false)),
             thread_success: Arc::new(AtomicBool::new(false)),
@@ -306,6 +315,22 @@ impl AppStoreState {
         self.right_scroll = 0;
         self.right_action_cursor = 0;
         self.in_right_actions = false;
+    }
+
+    /// Scroll the details pane just enough to bring the focused action into view.
+    pub fn ensure_action_visible(&mut self) {
+        let target = match self.right_action_lines.borrow().get(self.right_action_cursor) {
+            Some(&t) => t,
+            None => return,
+        };
+        let height = self.right_view_height.get().max(1);
+        let max_scroll = self.right_total_lines.get().saturating_sub(height);
+        if target < self.right_scroll {
+            self.right_scroll = target;
+        } else if target >= self.right_scroll + height {
+            self.right_scroll = target + 1 - height;
+        }
+        self.right_scroll = self.right_scroll.min(max_scroll);
     }
 
     /// Build filtered and sorted list from registered apps.
