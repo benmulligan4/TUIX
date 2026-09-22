@@ -902,9 +902,10 @@ fn execute_action(
             }
         }
     } else if let Some(page_name) = data.strip_prefix("page:") {
-        logging::info(&format!("Opened page: {}", page_name));
         if page_name == "logs" {
             state.log_scroll = 0;
+        } else {
+            logging::info(&format!("Opened page: {}", page_name));
         }
         if page_name == "appstore" {
             state.needs_sync = true;
