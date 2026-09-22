@@ -33,7 +33,7 @@ pub fn color_from_name(name: &str) -> Color {
     match name {
         "Cyan"       => Color::Cyan,
         "Green"      => Color::Green,
-        "Yellow"     => Color::Yellow,
+        "Yellow"     => Color::LightYellow,
         "Blue"       => Color::Blue,
         "Magenta"    => Color::Magenta,
         "Red"        => Color::Red,
@@ -113,9 +113,9 @@ pub fn render(frame: &mut Frame, area: Rect, cursor: usize, _scroll: usize, edit
         if is_active && editing && is_edit_mode_item(i) {
             lines.push(Line::from(vec![
                 Span::styled(format!("{}{:<22}", prefix, label), style),
-                Span::styled("  ◄ ", Style::default().fg(Color::Yellow)),
+                Span::styled("  ◄ ", Style::default().fg(Color::LightYellow)),
                 Span::styled(value.as_str(), Style::default().fg(Color::White)),
-                Span::styled(" ►", Style::default().fg(Color::Yellow)),
+                Span::styled(" ►", Style::default().fg(Color::LightYellow)),
             ]));
         } else {
             lines.push(Line::from(vec![

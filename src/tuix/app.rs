@@ -321,7 +321,7 @@ fn render_dropdown(frame: &mut Frame, area: Rect, nav_items: &[NavItem], state: 
 fn status_color(status: AppStatus) -> Color {
     match status {
         AppStatus::Running => Color::Green,
-        AppStatus::Idle => Color::Yellow,
+        AppStatus::Idle => Color::LightYellow,
         AppStatus::Stopped => Color::DarkGray,
     }
 }
@@ -494,7 +494,7 @@ fn render_logs_page(frame: &mut Frame, area: Rect, state: &TuixState, border_sty
                 let after = &line[start + tag.len()..];
                 Line::from(vec![
                     Span::styled(format!("  {}", before), Style::default().fg(Color::White)),
-                    Span::styled(tag, Style::default().fg(Color::Yellow)),
+                    Span::styled(tag, Style::default().fg(Color::LightYellow)),
                     Span::styled(after.to_string(), Style::default().fg(Color::White)),
                 ])
             } else if let Some(start) = line.find("[ERROR]") {

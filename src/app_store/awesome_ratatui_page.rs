@@ -27,7 +27,7 @@ pub fn render_browser(
         frame.render_widget(
             Paragraph::new(Line::from(Span::styled(
                 "\n  Fetching awesome-ratatui list...",
-                Style::default().fg(Color::Yellow),
+                Style::default().fg(Color::LightYellow),
             ))),
             inner,
         );
@@ -154,9 +154,9 @@ fn render_app_list(
                 let collapsed = browser.collapsed.contains(cat);
                 let arrow = if collapsed { "▶" } else { "▼" };
                 let cat_style = if is_cursor {
-                    Style::default().fg(Color::Black).bg(Color::Yellow)
+                    Style::default().fg(Color::Black).bg(Color::LightYellow)
                 } else {
-                    Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+                    Style::default().fg(Color::LightYellow).add_modifier(Modifier::BOLD)
                 };
                 let count = browser.apps.iter()
                     .filter(|a| a.category == *cat)

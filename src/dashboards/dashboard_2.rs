@@ -24,7 +24,7 @@ fn color_for_pct(pct: f64) -> Color {
     if pct >= 85.0 {
         Color::Red
     } else if pct >= 60.0 {
-        Color::Yellow
+        Color::LightYellow
     } else {
         Color::Green
     }

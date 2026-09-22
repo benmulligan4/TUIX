@@ -32,9 +32,9 @@ pub fn render(frame: &mut Frame, area: Rect, cursor: usize, _scroll: usize, edit
         if is_active && editing {
             lines.push(Line::from(vec![
                 Span::styled(format!("{}{:<24}", prefix, format!("Hotkey {}", key_num)), style),
-                Span::styled("  ◄ ", Style::default().fg(Color::Yellow)),
+                Span::styled("  ◄ ", Style::default().fg(Color::LightYellow)),
                 Span::styled(current.clone(), Style::default().fg(Color::White)),
-                Span::styled(" ►", Style::default().fg(Color::Yellow)),
+                Span::styled(" ►", Style::default().fg(Color::LightYellow)),
             ]));
         } else {
             lines.push(Line::from(vec![
