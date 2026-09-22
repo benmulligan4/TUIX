@@ -19,7 +19,7 @@ use super::queue::QueueStatus;
 use super::state::{AppStoreFocus, AppStoreState, ConfirmAction, InstallStatus};
 
 /// Width of the install queue column.
-const QUEUE_WIDTH: u16 = 38;
+const QUEUE_WIDTH: u16 = 46;
 
 /// Bordered wrapper that makes it obvious which pane the user is navigating in.
 fn pane_block<'a>(title: &'a str, focused: bool, btype: BorderType, accent: Color) -> Block<'a> {
@@ -120,22 +120,17 @@ pub fn render(
     } else if state.queue_visible() {
         let right_sections = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Percentage(55),
-                Constraint::Length(1),
-                Constraint::Fill(1),
-            ])
+            .constraints([Constraint::Percentage(55), Constraint::Fill(1)])
             .split(full_right_area);
         frame.render_widget(
             page_label(pane_block(" Details ", right_focused, btype, accent)),
             right_sections[0],
         );
         render_right_pane(frame, right_sections[0], state, registered);
-        render_status_line(frame, right_sections[1], state);
 
         // Terminal on the left of the bottom row, queue on the right
-        let bottom_area = right_sections[2];
-        if bottom_area.width >= 56 {
+        let bottom_area = right_sections[1];
+        if bottom_area.width >= 64 {
             let bottom = Layout::default()
                 .direction(Direction::Horizontal)
                 .constraints([Constraint::Fill(1), Constraint::Length(QUEUE_WIDTH)])
@@ -333,9 +328,9 @@ fn render_left_pane(
                 let collapsed = state.collapsed_store_categories.contains(cat);
                 let arrow = if collapsed { "▶" } else { "▼" };
                 let cat_style = if is_selected && in_app_list {
-                    Style::default().fg(Color::Black).bg(Color::Yellow)
+                    Style::default().fg(Color::Black).bg(Color::LightYellow)
                 } else {
-                    Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+                    Style::default().fg(Color::LightYellow).add_modifier(Modifier::BOLD)
                 };
                 lines.push(Line::from(Span::styled(
                     format!(" {} {}", arrow, cat),
@@ -371,7 +366,7 @@ fn render_left_pane(
                 let style = if is_selected && in_app_list {
                     Style::default().fg(Color::Black).bg(Color::Cyan)
                 } else if queued {
-                    Style::default().fg(Color::Yellow)
+                    Style::default().fg(Color::LightYellow)
                 } else if is_failed {
                     Style::default().fg(Color::Red)
                 } else if is_installed {
@@ -459,7 +454,7 @@ fn render_right_pane(
     } else {
         lines.push(Line::from(Span::styled(
             "  ⚠ Experimental — added from Awesome Ratatui",
-            Style::default().fg(Color::Yellow),
+            Style::default().fg(Color::LightYellow),
         )));
     }
     lines.push(Line::from(""));
@@ -627,11 +622,11 @@ fn render_right_pane(
             let current_source = super::actions::get_run_source(&selected_key);
             let source_label = if current_source == "local" { "Downloads" } else { "PATH" };
             let source_text = format!("  [ Default Source: {} — press to switch ]", source_label);
-            push_action!(source_text, Style::default().fg(Color::Yellow));
+            push_action!(source_text, Style::default().fg(Color::LightYellow));
             if current_source == "local" {
                 lines.push(Line::from(Span::styled(
                     "    ⚠ Downloads source is experimental",
-                    Style::default().fg(Color::Yellow),
+                    Style::default().fg(Color::LightYellow),
                 )));
             }
             action_idx += 1;
@@ -652,7 +647,7 @@ fn render_right_pane(
         if !supports_embed {
             lines.push(Line::from(Span::styled(
                 "  ⚠ This app only supports running in a new window",
-                Style::default().fg(Color::Yellow),
+                Style::default().fg(Color::LightYellow),
             )));
             lines.push(Line::from(Span::styled(
                 "    (running inside TUIX is not supported yet)",
@@ -662,7 +657,7 @@ fn render_right_pane(
             let current_mode = super::actions::get_window_mode(&selected_key, registered.get(&selected_key));
             let mode_label = super::actions::window_mode_label(&current_mode);
             let mode_text = format!("  [ Window Mode: {} — press to switch ]", mode_label);
-            push_action!(mode_text, Style::default().fg(Color::Yellow));
+            push_action!(mode_text, Style::default().fg(Color::LightYellow));
         }
     }
 
@@ -690,80 +685,6 @@ fn render_right_pane(
     };
 
     frame.render_widget(Paragraph::new(visible_lines), right_inner);
-
-    if total_lines > visible_height {
-        let info = format!(" {}↕{} ", scroll + 1, total_lines);
-        let info_width = info.len() as u16;
-        if area.width > info_width + 2 {
-            let indicator = Rect {
-                x: area.x + area.width - info_width - 1,
-                y: area.y + area.height - 1,
-                width: info_width,
-                height: 1,
-            };
-            frame.render_widget(
-                Paragraph::new(info).style(Style::default().fg(Color::DarkGray)),
-                indicator,
-            );
-        }
-    }
-}
-
-/// One-line banner between the Details pane and the terminal saying what the
-/// queue is currently doing.
-fn render_status_line(frame: &mut Frame, area: Rect, state: &AppStoreState) {
-    let (text, style) = match state.queue.running() {
-        Some(item) => {
-            let pos = state
-                .queue
-                .running_position()
-                .map(|(i, n)| format!("  ({} of {})", i, n))
-                .unwrap_or_default();
-            (
-                format!(
-                    " ▸ {}ing {} {} {}{}",
-                    item.op.verb(),
-                    item.label,
-                    item.op.arrow(),
-                    item.op.target_label(),
-                    pos
-                ),
-                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
-            )
-        }
-        None if state.queue.paused && state.queue.pending_count() > 0 => (
-            format!(
-                " Queue paused — {} job(s) waiting  [P to resume]",
-                state.queue.pending_count()
-            ),
-            Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD),
-        ),
-        None if state.queue.pending_count() > 0 => (
-            format!(" ⏳ Starting next job — {} waiting", state.queue.pending_count()),
-            Style::default().fg(Color::Cyan),
-        ),
-        None => {
-            let finished = state.queue.items.len();
-            let failed = state
-                .queue
-                .items
-                .iter()
-                .filter(|i| i.status == QueueStatus::Failed)
-                .count();
-            let msg = if failed > 0 {
-                format!(
-                    " ✓ Queue idle — {} finished, {} failed  [X to clear]",
-                    finished, failed
-                )
-            } else {
-                format!(" ✓ Queue idle — {} finished  [X to clear]", finished)
-            };
-            (msg, Style::default().fg(Color::DarkGray))
-        }
-    };
-
-    let truncated: String = text.chars().take(area.width as usize).collect();
-    frame.render_widget(Paragraph::new(Line::from(Span::styled(truncated, style))), area);
 }
 
 fn render_terminal_panel(
@@ -775,23 +696,48 @@ fn render_terminal_panel(
     page_focused: bool,
 ) {
     let focused = state.focus == AppStoreFocus::Terminal;
-    let viewed = state.viewed_item();
     let pinned = state.viewing_item.is_some();
 
-    let title = match viewed {
-        Some(item) if pinned => format!(
-            " Terminal — {} {}  [Enter on running job to unpin] ",
-            item.op.verb(),
-            item.label
-        ),
-        Some(item) => format!(" Terminal — {} {} ", item.op.verb(), item.label),
-        None => " Terminal Output ".to_string(),
+    // The job description lives in the border title rather than a separate banner
+    let mut title = match state.queue.running() {
+        Some(item) if !pinned => {
+            let pos = state
+                .queue
+                .running_position()
+                .map(|(i, n)| format!("  ({} of {})", i, n))
+                .unwrap_or_default();
+            format!(
+                " ▸ {}ing {} {} {}{} ",
+                item.op.verb(),
+                item.label,
+                item.op.arrow(),
+                item.op.target_label(),
+                pos
+            )
+        }
+        _ => match state.viewed_item() {
+            Some(item) => format!(
+                " {} {} {} {} — {} ",
+                item.op.verb(),
+                item.label,
+                item.op.arrow(),
+                item.op.target_label(),
+                item.status.label()
+            ),
+            None => " Terminal Output ".to_string(),
+        },
     };
-    let title = if focused {
-        format!("{} [W/S scroll] [A apps] [D queue] [Q back] ", title.trim_end())
+    if state.queue.paused && state.queue.pending_count() > 0 {
+        title.push_str(&format!(
+            "[PAUSED — {} waiting, P to resume] ",
+            state.queue.pending_count()
+        ));
+    }
+    if !focused {
+        title.push_str("[Shift+Tab to enter] ");
     } else {
-        format!("{} [Shift+Tab to enter] ", title.trim_end())
-    };
+        title.push_str("[W/S scroll] ");
+    }
 
     frame.render_widget(
         pane_block(&title, page_focused && focused, btype, accent),
@@ -821,7 +767,8 @@ fn render_terminal_panel(
         }
 
         if focused && log.len() > visible_height {
-            let info = format!(" {}/{} ", scroll + 1, log.len());
+            // Counted against the last scrollable position, so the bottom reads N/N
+            let info = format!(" {}/{} ", scroll, log.len() - visible_height);
             let info_width = info.len() as u16;
             if area.width > info_width + 2 {
                 let indicator_rect = Rect {
@@ -848,7 +795,7 @@ fn log_color(line: &str) -> Color {
     } else if t.starts_with('✓') {
         Color::Green
     } else if t.starts_with('⚠') || t.starts_with("warning") {
-        Color::Yellow
+        Color::LightYellow
     } else {
         Color::White
     }
@@ -888,7 +835,6 @@ fn render_queue_panel(
             format!(" {}   X clear queue", paused),
             hint_style,
         )));
-        footer.push(Line::from(Span::styled(" A terminal   Q details", hint_style)));
     } else {
         footer.push(Line::from(Span::styled(
             " Shift+Tab or D to enter",
@@ -914,10 +860,9 @@ fn render_queue_panel(
         }
         let base = match item.status {
             QueueStatus::Pending => Color::Gray,
-            QueueStatus::Running => Color::Yellow,
+            QueueStatus::Running => Color::LightYellow,
             QueueStatus::Done => Color::Green,
             QueueStatus::Failed => Color::Red,
-            QueueStatus::Cancelled => Color::DarkGray,
         };
         let style = if expanded {
             Style::default().fg(Color::Black).bg(base).add_modifier(Modifier::BOLD)
@@ -931,46 +876,38 @@ fn render_queue_panel(
 
         let viewing = state.viewing_item == Some(item.id);
         let marker = if viewing { "│" } else { " " };
-        let head = format!(
+        let left = format!(
             "{}{} {} {}",
             marker,
             item.status.glyph(),
             item.op.verb(),
             item.label
         );
-        lines.push(Line::from(Span::styled(pad_clip(&head, width), style)));
-
-        // A finished install speaks for itself — only say so when it did not
-        let detail = if item.status == QueueStatus::Done {
-            format!("    {} {}", item.op.arrow(), item.op.target_label())
+        let right = format!("{} {} ", item.op.arrow(), item.op.target_label());
+        let (lw, rw) = (left.chars().count(), right.chars().count());
+        let row = if lw + rw + 1 <= width {
+            format!("{}{}{}", left, " ".repeat(width - lw - rw), right)
         } else {
-            format!(
-                "    {} {}  — {}",
-                item.op.arrow(),
-                item.op.target_label(),
-                item.status.label()
-            )
+            pad_clip(&format!("{} {}", left, right), width)
         };
-        let detail_style = if selected {
-            Style::default().fg(Color::Black).bg(base)
-        } else {
-            Style::default().fg(Color::DarkGray)
-        };
-        lines.push(Line::from(Span::styled(pad_clip(&detail, width), detail_style)));
-
-        if let Some(note) = &item.note {
-            if item.status == QueueStatus::Failed {
-                for l in wrap_text(note, width.saturating_sub(6)) {
-                    lines.push(Line::from(Span::styled(
-                        format!("      {}", l),
-                        Style::default().fg(Color::Red),
-                    )));
-                }
-            }
-        }
+        lines.push(Line::from(Span::styled(row, style)));
 
         if expanded {
             let key_style = Style::default().fg(Color::Cyan);
+            lines.push(Line::from(Span::styled(
+                format!("     {} — {}", item.op.destination_phrase(), item.status.label()),
+                Style::default().fg(base),
+            )));
+            if item.status == QueueStatus::Failed {
+                if let Some(note) = &item.note {
+                    for l in wrap_text(note, width.saturating_sub(6)) {
+                        lines.push(Line::from(Span::styled(
+                            format!("     {}", l),
+                            Style::default().fg(Color::Red),
+                        )));
+                    }
+                }
+            }
             let mut opts: Vec<(&str, &str)> = vec![("Enter", "view log")];
             if state.queue.can_move(i, true) || state.queue.can_move(i, false) {
                 opts.push(("↑ / ↓", "move in queue"));
@@ -978,7 +915,7 @@ fn render_queue_panel(
             if item.status == QueueStatus::Pending {
                 opts.push(("C", "cancel job"));
             }
-            if matches!(item.status, QueueStatus::Failed | QueueStatus::Cancelled) {
+            if item.status == QueueStatus::Failed {
                 opts.push(("R", "retry job"));
             }
             opts.push(("Q / ←", "deselect"));
@@ -1030,7 +967,7 @@ fn render_confirm_dialog(frame: &mut Frame, area: Rect, state: &AppStoreState) {
         ConfirmAction::ClearQueue => (
             " Clear Install Queue ",
             "Clear finished jobs and cancel everything still pending?".to_string(),
-            Color::Yellow,
+            Color::LightYellow,
         ),
         ConfirmAction::UninstallChoose(n) => {
             (" Uninstall ", format!("Uninstall {} from:", n), Color::Red)

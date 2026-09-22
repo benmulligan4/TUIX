@@ -73,6 +73,15 @@ impl QueueOp {
     pub fn arrow(&self) -> &'static str {
         if self.is_install() { "→" } else { "←" }
     }
+
+    /// "Installing to PATH" / "Uninstalling from Downloads"
+    pub fn destination_phrase(&self) -> String {
+        if self.is_install() {
+            format!("Installing to {}", self.target_label())
+        } else {
+            format!("Uninstalling from {}", self.target_label())
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -81,7 +90,6 @@ pub enum QueueStatus {
     Running,
     Done,
     Failed,
-    Cancelled,
 }
 
 impl QueueStatus {
@@ -91,7 +99,6 @@ impl QueueStatus {
             QueueStatus::Running => "running",
             QueueStatus::Done => "done",
             QueueStatus::Failed => "failed",
-            QueueStatus::Cancelled => "cancelled",
         }
     }
 
@@ -101,12 +108,11 @@ impl QueueStatus {
             QueueStatus::Running => "▸",
             QueueStatus::Done => "✓",
             QueueStatus::Failed => "✗",
-            QueueStatus::Cancelled => "−",
         }
     }
 
     pub fn is_finished(&self) -> bool {
-        matches!(self, QueueStatus::Done | QueueStatus::Failed | QueueStatus::Cancelled)
+        matches!(self, QueueStatus::Done | QueueStatus::Failed)
     }
 }
 
@@ -271,14 +277,16 @@ impl InstallQueue {
         Some(self.items[idx].id)
     }
 
+    /// Cancelling drops the job entirely — it never ran, so there is nothing to show.
     pub fn cancel(&mut self, index: usize) -> Result<String, String> {
-        let item = self.items.get_mut(index).ok_or_else(|| "No item selected".to_string())?;
+        let item = self.items.get(index).ok_or_else(|| "No item selected".to_string())?;
         match item.status {
             QueueStatus::Pending => {
-                item.status = QueueStatus::Cancelled;
-                item.note = Some("Cancelled before it started".to_string());
-                item.summarised = true;
-                Ok(format!("Cancelled {} {}", item.op.verb().to_lowercase(), item.label))
+                let msg = format!("Cancelled {} {}", item.op.verb().to_lowercase(), item.label);
+                self.items.remove(index);
+                self.item_focused = false;
+                self.clamp_cursor();
+                Ok(msg)
             }
             QueueStatus::Running => {
                 Err("This job has already started and cannot be cancelled".to_string())
@@ -288,16 +296,11 @@ impl InstallQueue {
     }
 
     pub fn cancel_all_pending(&mut self) -> usize {
-        let mut n = 0;
-        for item in self.items.iter_mut() {
-            if item.status == QueueStatus::Pending {
-                item.status = QueueStatus::Cancelled;
-                item.note = Some("Cancelled before it started".to_string());
-                item.summarised = true;
-                n += 1;
-            }
-        }
-        n
+        let before = self.items.len();
+        self.items.retain(|i| i.status != QueueStatus::Pending);
+        self.item_focused = false;
+        self.clamp_cursor();
+        before - self.items.len()
     }
 
     pub fn clear_finished(&mut self) -> usize {
@@ -307,14 +310,14 @@ impl InstallQueue {
         before - self.items.len()
     }
 
-    /// Re-queue a failed or cancelled job at the back of the queue.
+    /// Re-queue a failed job at the back of the queue.
     pub fn retry(&mut self, index: usize) -> Result<String, String> {
         let (key, label, op, status) = {
             let item = self.items.get(index).ok_or_else(|| "No item selected".to_string())?;
             (item.key.clone(), item.label.clone(), item.op, item.status)
         };
-        if !matches!(status, QueueStatus::Failed | QueueStatus::Cancelled) {
-            return Err("Only failed or cancelled jobs can be retried".to_string());
+        if status != QueueStatus::Failed {
+            return Err("Only failed jobs can be retried".to_string());
         }
         self.enqueue(&key, &label, op)?;
         self.items.remove(index);
@@ -368,28 +371,24 @@ impl InstallQueue {
     pub fn take_summary(&mut self) -> Option<String> {
         let mut done = 0;
         let mut failed = 0;
-        let mut cancelled = 0;
         let mut notes: Vec<String> = Vec::new();
         for item in self.items.iter_mut().filter(|i| i.status.is_finished() && !i.summarised) {
             item.summarised = true;
-            match item.status {
-                QueueStatus::Done => done += 1,
-                QueueStatus::Failed => {
-                    failed += 1;
-                    if let Some(n) = &item.note {
-                        notes.push(format!("{}: {}", item.label, n));
-                    }
+            if item.status == QueueStatus::Done {
+                done += 1;
+            } else {
+                failed += 1;
+                if let Some(n) = &item.note {
+                    notes.push(format!("{}: {}", item.label, n));
                 }
-                _ => cancelled += 1,
             }
         }
-        if done + failed + cancelled == 0 {
+        if done + failed == 0 {
             return None;
         }
         let mut parts = Vec::new();
         if done > 0 { parts.push(format!("{} succeeded", done)); }
         if failed > 0 { parts.push(format!("{} failed", failed)); }
-        if cancelled > 0 { parts.push(format!("{} cancelled", cancelled)); }
         let mut msg = format!("Install queue finished — {}", parts.join(", "));
         for note in notes.iter().take(2) {
             msg.push_str(&format!("  •  {}", note));
