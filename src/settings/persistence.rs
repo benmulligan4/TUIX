@@ -36,7 +36,17 @@ fn settings_path() -> PathBuf {
         "display": {
             "fullscreen": false
         },
-        "hotkeys": {},
+        "hotkeys": {
+            "key_1": null,
+            "key_2": null,
+            "key_3": null,
+            "key_4": null,
+            "key_5": null,
+            "key_6": null,
+            "key_7": null,
+            "key_8": null,
+            "key_9": null
+        },
         "button_mapping": {
             "focus_toggle_key": "Tab"
         },
