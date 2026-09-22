@@ -1378,6 +1378,7 @@ pub fn spawn_uninstall(
     remove_local: bool,
     output: Arc<Mutex<Vec<String>>>,
     done: Arc<AtomicBool>,
+    success: Arc<AtomicBool>,
     warning: Arc<Mutex<Option<String>>>,
 ) {
     let app_key = app_key.to_string();
@@ -1386,11 +1387,13 @@ pub fn spawn_uninstall(
 
     thread::spawn(move || {
         let mut any_locked = false;
+        let mut any_failed = false;
 
         if remove_global {
             match uninstall_global(&package, &candidates, &output) {
                 UninstallOutcome::Locked(_) => any_locked = true,
                 UninstallOutcome::Failed(msg) => {
+                    any_failed = true;
                     push_output(&output, format!("✗ {}", msg));
                 }
                 UninstallOutcome::Removed => {}
@@ -1401,6 +1404,7 @@ pub fn spawn_uninstall(
             match uninstall_local(&app_key, &category, &output) {
                 UninstallOutcome::Locked(_) => any_locked = true,
                 UninstallOutcome::Failed(msg) => {
+                    any_failed = true;
                     push_output(&output, format!("✗ {}", msg));
                 }
                 UninstallOutcome::Removed => {}
@@ -1415,6 +1419,10 @@ pub fn spawn_uninstall(
             if let Ok(mut w) = warning.lock() {
                 *w = Some(msg);
             }
+        }
+
+        if !any_failed {
+            success.store(true, Ordering::Relaxed);
         }
 
         // Config is rebuilt from what is actually on disk, so leftovers stay listed

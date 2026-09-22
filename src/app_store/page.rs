@@ -15,7 +15,11 @@ use ratatui::{
 };
 use serde_json::Value;
 
+use super::queue::QueueStatus;
 use super::state::{AppStoreFocus, AppStoreState, ConfirmAction, InstallStatus};
+
+/// Width of the install queue column.
+const QUEUE_WIDTH: u16 = 38;
 
 /// Bordered wrapper that makes it obvious which pane the user is navigating in.
 fn pane_block<'a>(title: &'a str, focused: bool, btype: BorderType, accent: Color) -> Block<'a> {
@@ -83,12 +87,16 @@ pub fn render(
                 | AppStoreFocus::FilterPanel
                 | AppStoreFocus::BrowserButton
         );
-    let right_focused = page_focused
-        && !state.browser.active
-        && state.focus == AppStoreFocus::RightPane
-        && !state.terminal_focused;
+    let right_focused =
+        page_focused && !state.browser.active && state.focus == AppStoreFocus::RightPane;
 
-    frame.render_widget(pane_block(" Apps ", left_focused, btype, accent), left_area);
+    let queued = state.queue.active_count();
+    let apps_title = if queued > 0 {
+        format!(" Apps  ⏳{} ", queued)
+    } else {
+        " Apps ".to_string()
+    };
+    frame.render_widget(pane_block(&apps_title, left_focused, btype, accent), left_area);
     render_left_pane(
         frame,
         left_area.inner(Margin { horizontal: 1, vertical: 1 }),
@@ -109,17 +117,39 @@ pub fn render(
             registered,
             &state.install_statuses,
         );
-    } else if state.terminal_visible {
+    } else if state.queue_visible() {
         let right_sections = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
+            .constraints([
+                Constraint::Percentage(55),
+                Constraint::Length(1),
+                Constraint::Fill(1),
+            ])
             .split(full_right_area);
         frame.render_widget(
             page_label(pane_block(" Details ", right_focused, btype, accent)),
             right_sections[0],
         );
         render_right_pane(frame, right_sections[0], state, registered);
-        render_terminal_panel(frame, right_sections[1], state, btype, accent, page_focused);
+        render_status_line(frame, right_sections[1], state);
+
+        // Terminal on the left of the bottom row, queue on the right
+        let bottom_area = right_sections[2];
+        if bottom_area.width >= 56 {
+            let bottom = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Fill(1), Constraint::Length(QUEUE_WIDTH)])
+                .split(bottom_area);
+            render_terminal_panel(frame, bottom[0], state, btype, accent, page_focused);
+            render_queue_panel(frame, bottom[1], state, btype, accent, page_focused);
+        } else {
+            // Too narrow to show both — whichever pane has focus wins
+            if state.focus == AppStoreFocus::Queue {
+                render_queue_panel(frame, bottom_area, state, btype, accent, page_focused);
+            } else {
+                render_terminal_panel(frame, bottom_area, state, btype, accent, page_focused);
+            }
+        }
     } else {
         frame.render_widget(
             page_label(pane_block(" Details ", right_focused, btype, accent)),
@@ -319,13 +349,18 @@ fn render_left_pane(
                 };
                 let label = meta.get("label").and_then(|v| v.as_str()).unwrap_or(key);
 
-                let installed_indicator = match state.install_statuses.get(key.as_str()) {
-                    Some(InstallStatus::NotInstalled) | None => " ",
-                    _ => "✓",
-                };
-
+                let queued = state.queue.has_active_for(key);
                 let prefix = if is_selected && in_app_list { " » " } else { "   " };
-                let text = format!("{}{} {}", prefix, installed_indicator, label);
+                // ⏳ is double-width, so it replaces the glyph and its trailing space
+                let text = if queued {
+                    format!("{}⏳{}", prefix, label)
+                } else {
+                    let indicator = match state.install_statuses.get(key.as_str()) {
+                        Some(InstallStatus::NotInstalled) | None => " ",
+                        _ => "✓",
+                    };
+                    format!("{}{} {}", prefix, indicator, label)
+                };
 
                 let is_installed = matches!(
                     state.install_statuses.get(key.as_str()),
@@ -335,6 +370,8 @@ fn render_left_pane(
 
                 let style = if is_selected && in_app_list {
                     Style::default().fg(Color::Black).bg(Color::Cyan)
+                } else if queued {
+                    Style::default().fg(Color::Yellow)
                 } else if is_failed {
                     Style::default().fg(Color::Red)
                 } else if is_installed {
@@ -510,12 +547,20 @@ fn render_right_pane(
     // Run button (only for installed apps)
     let is_installed = !matches!(install_status, InstallStatus::NotInstalled);
     if is_installed {
+        let locked = state.ui_locked();
         let run_style = if in_actions && state.right_action_cursor == action_idx {
             Style::default().fg(Color::Black).bg(Color::Cyan)
+        } else if locked {
+            Style::default().fg(Color::DarkGray)
         } else {
             Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)
         };
-        lines.push(Line::from(Span::styled("  [ Run ]", run_style)));
+        let run_text = if locked {
+            "  [ Run ]  ⚠ UI locked while the queue is running"
+        } else {
+            "  [ Run ]"
+        };
+        lines.push(Line::from(Span::styled(run_text, run_style)));
         action_idx += 1;
     }
 
@@ -700,6 +745,63 @@ fn render_right_pane(
     frame.render_widget(Paragraph::new(visible_lines), right_inner);
 }
 
+/// One-line banner between the Details pane and the terminal saying what the
+/// queue is currently doing.
+fn render_status_line(frame: &mut Frame, area: Rect, state: &AppStoreState) {
+    let (text, style) = match state.queue.running() {
+        Some(item) => {
+            let pos = state
+                .queue
+                .running_position()
+                .map(|(i, n)| format!("  ({} of {})", i, n))
+                .unwrap_or_default();
+            (
+                format!(
+                    " ▸ {}ing {} {} {}{}",
+                    item.op.verb(),
+                    item.label,
+                    item.op.arrow(),
+                    item.op.target_label(),
+                    pos
+                ),
+                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+            )
+        }
+        None if state.queue.paused && state.queue.pending_count() > 0 => (
+            format!(
+                " ⏸ Queue paused — {} job(s) waiting  [P to resume]",
+                state.queue.pending_count()
+            ),
+            Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD),
+        ),
+        None if state.queue.pending_count() > 0 => (
+            format!(" ⏳ Starting next job — {} waiting", state.queue.pending_count()),
+            Style::default().fg(Color::Cyan),
+        ),
+        None => {
+            let finished = state.queue.items.len();
+            let failed = state
+                .queue
+                .items
+                .iter()
+                .filter(|i| i.status == QueueStatus::Failed)
+                .count();
+            let msg = if failed > 0 {
+                format!(
+                    " ✓ Queue idle — {} finished, {} failed  [X to clear]",
+                    finished, failed
+                )
+            } else {
+                format!(" ✓ Queue idle — {} finished  [X to clear]", finished)
+            };
+            (msg, Style::default().fg(Color::DarkGray))
+        }
+    };
+
+    let truncated: String = text.chars().take(area.width as usize).collect();
+    frame.render_widget(Paragraph::new(Line::from(Span::styled(truncated, style))), area);
+}
+
 fn render_terminal_panel(
     frame: &mut Frame,
     area: Rect,
@@ -708,45 +810,54 @@ fn render_terminal_panel(
     accent: Color,
     page_focused: bool,
 ) {
-    let title = if state.operation_running {
-        " Terminal Output  [Shift+Tab to scroll] [operation in progress] "
-    } else if state.terminal_focused {
-        " Terminal Output  [Q to exit] [Shift+C to close] "
-    } else if !state.terminal_output.is_empty() {
-        " Terminal Output  [Shift+Tab to enter] [Shift+C to close] "
+    let focused = state.focus == AppStoreFocus::Terminal;
+    let viewed = state.viewed_item();
+    let pinned = state.viewing_item.is_some();
+
+    let title = match viewed {
+        Some(item) if pinned => format!(
+            " Terminal — {} {}  [Enter on running job to unpin] ",
+            item.op.verb(),
+            item.label
+        ),
+        Some(item) => format!(" Terminal — {} {} ", item.op.verb(), item.label),
+        None => " Terminal Output ".to_string(),
+    };
+    let title = if focused {
+        format!("{} [W/S scroll] [A apps] [D queue] [Q back] ", title.trim_end())
     } else {
-        " Terminal Output  [Shift+Tab to enter] "
+        format!("{} [Shift+Tab to enter] ", title.trim_end())
     };
 
     frame.render_widget(
-        pane_block(title, page_focused && state.terminal_focused, btype, accent),
+        pane_block(&title, page_focused && focused, btype, accent),
         area,
     );
 
     let inner = area.inner(Margin { horizontal: 1, vertical: 1 });
     let visible_height = inner.height as usize;
+    state.terminal_view_height.set(visible_height.max(1));
 
+    let log = state.visible_log();
     let mut lines: Vec<Line> = Vec::new();
 
-    if state.terminal_output.is_empty() {
+    if log.is_empty() {
         lines.push(Line::from(Span::styled(
-            "  (Install or uninstall an app to see output here)",
+            "  (waiting for output…)",
             Style::default().fg(Color::DarkGray),
         )));
     } else {
-        let max_scroll = state.terminal_output.len().saturating_sub(visible_height);
-        let scroll = state.terminal_scroll.min(max_scroll);
-        let end = (scroll + visible_height).min(state.terminal_output.len());
-        for line in &state.terminal_output[scroll..end] {
+        let scroll = state.effective_terminal_scroll();
+        let end = (scroll + visible_height).min(log.len());
+        for line in &log[scroll..end] {
             lines.push(Line::from(Span::styled(
                 format!("  {}", line),
-                Style::default().fg(Color::White),
+                Style::default().fg(log_color(line)),
             )));
         }
 
-        // Scroll indicator
-        if state.terminal_focused && state.terminal_output.len() > visible_height {
-            let info = format!(" {}/{} ", scroll + 1, state.terminal_output.len());
+        if focused && log.len() > visible_height {
+            let info = format!(" {}/{} ", scroll + 1, log.len());
             let info_width = info.len() as u16;
             if area.width > info_width + 2 {
                 let indicator_rect = Rect {
@@ -764,6 +875,147 @@ fn render_terminal_panel(
     }
 
     frame.render_widget(Paragraph::new(lines), inner);
+}
+
+fn log_color(line: &str) -> Color {
+    let t = line.trim_start();
+    if t.starts_with('✗') || t.starts_with("error") || t.starts_with("error:") {
+        Color::Red
+    } else if t.starts_with('✓') {
+        Color::Green
+    } else if t.starts_with('⚠') || t.starts_with("warning") {
+        Color::Yellow
+    } else {
+        Color::White
+    }
+}
+
+fn render_queue_panel(
+    frame: &mut Frame,
+    area: Rect,
+    state: &AppStoreState,
+    btype: BorderType,
+    accent: Color,
+    page_focused: bool,
+) {
+    let focused = state.focus == AppStoreFocus::Queue;
+    let active = state.queue.active_count();
+    let title = if active > 0 {
+        format!(" Install Queue ({}) ", active)
+    } else {
+        " Install Queue ".to_string()
+    };
+    frame.render_widget(
+        pane_block(&title, page_focused && focused, btype, accent),
+        area,
+    );
+
+    let inner = area.inner(Margin { horizontal: 1, vertical: 1 });
+    let width = inner.width as usize;
+
+    let mut lines: Vec<Line> = Vec::new();
+
+    if state.queue.items.is_empty() {
+        lines.push(Line::from(Span::styled(
+            " Queue is empty",
+            Style::default().fg(Color::DarkGray),
+        )));
+    }
+
+    for (i, item) in state.queue.items.iter().enumerate() {
+        let selected = focused && i == state.queue.cursor;
+        let base = match item.status {
+            QueueStatus::Pending => Color::Gray,
+            QueueStatus::Running => Color::Yellow,
+            QueueStatus::Done => Color::Green,
+            QueueStatus::Failed => Color::Red,
+            QueueStatus::Cancelled => Color::DarkGray,
+        };
+        let style = if selected {
+            Style::default().fg(Color::Black).bg(base)
+        } else if item.status == QueueStatus::Running {
+            Style::default().fg(base).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(base)
+        };
+
+        let viewing = state.viewing_item == Some(item.id);
+        let marker = if viewing { "│" } else { " " };
+        let head = format!(
+            "{}{} {} {}",
+            marker,
+            item.status.glyph(),
+            item.op.verb(),
+            item.label
+        );
+        lines.push(Line::from(Span::styled(pad_clip(&head, width), style)));
+
+        let detail = format!(
+            "    {} {}  — {}",
+            item.op.arrow(),
+            item.op.target_label(),
+            item.status.label()
+        );
+        let detail_style = if selected {
+            Style::default().fg(Color::Black).bg(base)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+        lines.push(Line::from(Span::styled(pad_clip(&detail, width), detail_style)));
+
+        if let Some(note) = &item.note {
+            if item.status == QueueStatus::Failed {
+                for l in wrap_text(note, width.saturating_sub(6)) {
+                    lines.push(Line::from(Span::styled(
+                        format!("      {}", l),
+                        Style::default().fg(Color::Red),
+                    )));
+                }
+            }
+        }
+    }
+
+    lines.push(Line::from(""));
+    let hint_style = Style::default().fg(Color::DarkGray);
+    if focused {
+        let paused = if state.queue.paused { "P resume" } else { "P pause" };
+        lines.push(Line::from(Span::styled(" Enter view log  C cancel", hint_style)));
+        lines.push(Line::from(Span::styled(
+            format!(" R retry  X clear  {}", paused),
+            hint_style,
+        )));
+        lines.push(Line::from(Span::styled(
+            " Shift+↑/↓ reorder  A terminal",
+            hint_style,
+        )));
+    } else {
+        lines.push(Line::from(Span::styled(
+            " Shift+Tab or D to enter",
+            hint_style,
+        )));
+    }
+
+    // Keep the selected row on screen
+    let height = inner.height as usize;
+    let visible: Vec<Line> = if lines.len() > height {
+        let anchor = state.queue.cursor * 2;
+        let start = anchor.saturating_sub(height.saturating_sub(4)).min(lines.len() - height);
+        lines[start..start + height].to_vec()
+    } else {
+        lines
+    };
+
+    frame.render_widget(Paragraph::new(visible), inner);
+}
+
+/// Pad to the pane width so the selection highlight fills the whole row.
+fn pad_clip(text: &str, width: usize) -> String {
+    let mut s: String = text.chars().take(width).collect();
+    let len = s.chars().count();
+    if len < width {
+        s.push_str(&" ".repeat(width - len));
+    }
+    s
 }
 
 fn render_confirm_dialog(frame: &mut Frame, area: Rect, state: &AppStoreState) {
