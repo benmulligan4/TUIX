@@ -237,7 +237,8 @@ pub fn handle_enter(cursor: usize, ss: &mut SettingsState) {
                     "border_style": "Rounded",
                     "status_bar_enabled": false,
                     "new_window_keeps_tuios_open": false,
-                    "navbar_position": "Top"
+                    "navbar_position": "Top",
+                    "intro_animation_enabled": true
                 },
                 "display": {
                     "fullscreen": false
