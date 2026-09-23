@@ -9,6 +9,7 @@ use crate::utilities::logging;
 
 const README_URL: &str =
     "https://raw.githubusercontent.com/ratatui/awesome-ratatui/main/README.md";
+pub const REPO_URL: &str = "https://github.com/ratatui/awesome-ratatui";
 const CACHE_FILE: &str = "awesome-ratatui-cache.json";
 const CACHE_TTL_SECS: u64 = 3600;
 
@@ -33,6 +34,7 @@ struct Cache {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BrowserFocus {
     SearchBar,
+    RepoButton,
     DescriptionToggle,
     List,
     Actions,
