@@ -1,8 +1,8 @@
 [package]
-name = "tuix_rust"
+name = "tuios_rust"
 version = "0.1.0"
 edition = "2021"
-description = "TUIX — Terminal UI Experience (Rust/ratatui port)"
+description = "tuiOS — Terminal UI Experience (Rust/ratatui port)"
 
 [dependencies]
 ratatui = "0.29"

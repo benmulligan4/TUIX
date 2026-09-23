@@ -56,7 +56,7 @@ pub fn handle_enter(cursor: usize) -> bool {
             false
         }
         1 => {
-            let _ = std::fs::write("tuix.log", "");
+            let _ = std::fs::write("tuios.log", "");
             true // Show popup
         }
         _ => false,

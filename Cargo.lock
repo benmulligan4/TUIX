@@ -1243,7 +1243,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "tuix_rust"
+name = "tuios_rust"
 version = "0.1.0"
 dependencies = [
  "chrono",

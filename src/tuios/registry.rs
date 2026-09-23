@@ -1,4 +1,4 @@
-/// TUIX — load app/dashboard/settings registries from config/ JSON files.
+/// tuiOS — load app/dashboard/settings registries from config/ JSON files.
 
 use serde_json::Value;
 use std::collections::HashMap;
@@ -26,7 +26,7 @@ fn config_dir() -> PathBuf {
     cwd_config
 }
 
-/// Apps that ship with TUIX. They live in code rather than only in apps.json so a
+/// Apps that ship with tuiOS. They live in code rather than only in apps.json so a
 /// deleted or regenerated config can never drop them from the navbar.
 const BUILTIN_APPS: &[(&str, &str, &str)] = &[
     ("CharacterSet", "Character Set", "applications::character_set"),

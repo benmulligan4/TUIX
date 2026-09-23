@@ -4,7 +4,7 @@
 /// Q closes the keyboard. Includes Backspace, Space, cursor left/right,
 /// Shift, and Enter keys.
 ///
-/// This component can be embedded into any TUIX app or used with
+/// This component can be embedded into any tuiOS app or used with
 /// third-party dashboards by rendering it in a sub-area of the frame.
 
 use ratatui::{

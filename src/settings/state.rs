@@ -30,7 +30,7 @@ impl SettingsCategory {
 
     pub fn label(&self) -> &'static str {
         match self {
-            SettingsCategory::About => "About TUIX",
+            SettingsCategory::About => "About tuiOS",
             SettingsCategory::WifiBluetooth => "WiFi & Bluetooth",
             SettingsCategory::Audio => "Audio",
             SettingsCategory::Display => "Display",

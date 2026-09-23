@@ -1,10 +1,10 @@
-/// Character Set — internal TUIX app.
+/// Character Set — internal tuiOS app.
 ///
 /// Displays a scrollable grid of printable characters with their
 /// Unicode code points. No external code or binary required — the
 /// character data is generated at runtime.
 ///
-/// TUIX Internal App API:
+/// tuiOS Internal App API:
 ///     start()               — called when the app is opened
 ///     stop()                — called when the app is closed
 ///     render(frame, area)   — draw the app inside the main container

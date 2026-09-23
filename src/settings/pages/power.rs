@@ -1,4 +1,4 @@
-/// Power settings — shutdown/restart TUIX.
+/// Power settings — shutdown/restart tuiOS.
 
 use ratatui::{
     layout::Rect,
@@ -12,8 +12,8 @@ pub fn render(frame: &mut Frame, area: Rect, cursor: usize, _scroll: usize) {
     let value_style = Style::default().fg(Color::White);
 
     let items: &[&str] = &[
-        "Shut Down TUIX",
-        "Restart TUIX",
+        "Shut Down tuiOS",
+        "Restart tuiOS",
     ];
 
     let mut lines: Vec<Line> = Vec::new();
@@ -35,8 +35,8 @@ pub fn item_count() -> usize { 2 }
 pub fn handle_enter(cursor: usize) -> crate::settings::page::SettingsAction {
     use crate::settings::page::SettingsAction;
     match cursor {
-        0 => SettingsAction::Quit,    // Shut Down TUIX
-        1 => SettingsAction::Restart, // Restart TUIX
+        0 => SettingsAction::Quit,    // Shut Down tuiOS
+        1 => SettingsAction::Restart, // Restart tuiOS
         _ => SettingsAction::None,
     }
 }

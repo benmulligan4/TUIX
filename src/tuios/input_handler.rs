@@ -1,4 +1,4 @@
-/// TUIX — normalize raw crossterm key codes into Action enum values.
+/// tuiOS — normalize raw crossterm key codes into Action enum values.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use super::models::Action;

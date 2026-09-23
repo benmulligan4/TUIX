@@ -1,4 +1,4 @@
-/// Appearance settings — clock, default dashboard, TUIX colour.
+/// Appearance settings — clock, default dashboard, tuiOS colour.
 
 use ratatui::{
     layout::Rect,
@@ -81,11 +81,11 @@ pub fn render(frame: &mut Frame, area: Rect, cursor: usize, _scroll: usize, edit
     let default_dash = persistence::get_str(&settings, "default_dashboard", "Dashboard-1");
     let border_style = persistence::get_str(&settings, "appearance.border_style", "Rounded");
     let status_bar = persistence::get_bool(&settings, "appearance.status_bar_enabled", false);
-    let keep_open = persistence::get_bool(&settings, "appearance.new_window_keeps_tuix_open", false);
+    let keep_open = persistence::get_bool(&settings, "appearance.new_window_keeps_tuios_open", false);
     let navbar_bottom = persistence::get_str(&settings, "appearance.navbar_position", "Top") == "Bottom";
 
     let items: Vec<(&str, String)> = vec![
-        ("TUIX Colour", accent),
+        ("tuiOS Colour", accent),
         ("Clock", if clock_on { "Enabled".into() } else { "Disabled".into() }),
         ("Clock Format", if clock_24h { "24 hour".into() } else { "12 hour".into() }),
         ("Show Seconds", if clock_secs { "Yes".into() } else { "No".into() }),
@@ -94,7 +94,7 @@ pub fn render(frame: &mut Frame, area: Rect, cursor: usize, _scroll: usize, edit
         ("Status Bar", if status_bar { "Enabled".into() } else { "Disabled".into() }),
         (
             "New Window Apps",
-            if keep_open { "Keep TUIX open".into() } else { "Close TUIX while running".into() },
+            if keep_open { "Keep tuiOS open".into() } else { "Close tuiOS while running".into() },
         ),
         ("Navigation Bar", if navbar_bottom { "Bottom".into() } else { "Top".into() }),
     ];
@@ -130,7 +130,7 @@ pub fn render(frame: &mut Frame, area: Rect, cursor: usize, _scroll: usize, edit
 
 /// Returns true for items that use left/right cycling (more than 2 options).
 pub fn is_edit_mode_item(cursor: usize) -> bool {
-    matches!(cursor, 0 | 4 | 5) // TUIX Colour, Default Dashboard, Border Style
+    matches!(cursor, 0 | 4 | 5) // tuiOS Colour, Default Dashboard, Border Style
 }
 
 pub fn item_count() -> usize { 9 }
@@ -146,7 +146,7 @@ pub fn handle_cycle(cursor: usize, forward: bool) {
             let next_idx = if forward { (idx + 1) % len } else { (idx + len - 1) % len };
             let next = ACCENT_COLORS[next_idx];
             persistence::set(&mut settings, "appearance.accent_color", serde_json::Value::String(next.to_string()));
-            crate::utilities::logging::settings(&format!("TUIX Colour changed to {}", next));
+            crate::utilities::logging::settings(&format!("tuiOS Colour changed to {}", next));
         }
         4 => {
             let dash_names = persistence::load_dashboard_names();
@@ -199,11 +199,11 @@ pub fn handle_enter(cursor: usize) {
             crate::utilities::logging::settings(&format!("Status bar {}", if !current { "enabled" } else { "disabled" }));
         }
         7 => {
-            let current = persistence::get_bool(&settings, "appearance.new_window_keeps_tuix_open", false);
-            persistence::set(&mut settings, "appearance.new_window_keeps_tuix_open", serde_json::Value::Bool(!current));
+            let current = persistence::get_bool(&settings, "appearance.new_window_keeps_tuios_open", false);
+            persistence::set(&mut settings, "appearance.new_window_keeps_tuios_open", serde_json::Value::Bool(!current));
             crate::utilities::logging::settings(&format!(
                 "New window apps: {}",
-                if !current { "TUIX stays open" } else { "TUIX closes while running" }
+                if !current { "tuiOS stays open" } else { "tuiOS closes while running" }
             ));
         }
         8 => {

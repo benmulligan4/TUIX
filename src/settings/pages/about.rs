@@ -1,4 +1,4 @@
-/// About TUIX — system information and stats.
+/// About tuiOS — system information and stats.
 
 use ratatui::{
     layout::Rect,
@@ -52,7 +52,7 @@ pub fn render(frame: &mut Frame, area: Rect, _cursor: usize, _scroll: usize) {
 
     let lines: Vec<Line> = vec![
         // Line::from(vec![
-        //     Span::styled("  TUIX Version:    ", label_style),
+        //     Span::styled("  tuiOS Version:    ", label_style),
         //     Span::styled(env!("CARGO_PKG_VERSION"), info_style),
         // ]),
         Line::from(vec![
@@ -98,7 +98,7 @@ pub fn render(frame: &mut Frame, area: Rect, _cursor: usize, _scroll: usize) {
             Span::styled(&default_dash, info_style),
         ]),
         Line::from(vec![
-            Span::styled("  TUIX Colour:     ", label_style),
+            Span::styled("  tuiOS Colour:     ", label_style),
             Span::styled(&accent, info_style),
         ]),
         Line::from(vec![

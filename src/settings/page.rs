@@ -1,4 +1,4 @@
-/// Settings page — rendered in the TUIX main container.
+/// Settings page — rendered in the tuiOS main container.
 ///
 /// Left pane: settings categories with emoji icons.
 /// Right pane: selected category's settings content.

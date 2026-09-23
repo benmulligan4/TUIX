@@ -1,4 +1,4 @@
-/// App Store page — rendered in the TUIX main container.
+/// App Store page — rendered in the tuiOS main container.
 ///
 /// Left pane: search bar, sort/filter controls, scrollable app list.
 /// Right pane: app preview with metadata and install/uninstall actions.
@@ -448,7 +448,7 @@ fn render_right_pane(
     // Approved badge or experimental warning
     if is_approved {
         lines.push(Line::from(Span::styled(
-            "  ✓ TUIX Approved",
+            "  ✓ tuiOS Approved",
             Style::default().fg(Color::Green),
         )));
     } else {
@@ -650,7 +650,7 @@ fn render_right_pane(
                 Style::default().fg(Color::Yellow),
             )));
             lines.push(Line::from(Span::styled(
-                "    (running inside TUIX is not supported yet)",
+                "    (running inside tuiOS is not supported yet)",
                 Style::default().fg(Color::DarkGray),
             )));
         } else {

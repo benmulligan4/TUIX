@@ -419,9 +419,9 @@ pub fn add_to_registered(app: &AwesomeApp) -> String {
     let key = repo_to_key(&app.repo_url);
     let value = to_registered_value(app);
 
-    let mut registered = crate::tuix::registry::load_registered_apps();
+    let mut registered = crate::tuios::registry::load_registered_apps();
     registered.insert(key.clone(), value);
-    crate::tuix::registry::save_config("registered-apps.json", &registered);
+    crate::tuios::registry::save_config("registered-apps.json", &registered);
 
     logging::info(&format!(
         "Awesome Ratatui: added '{}' ({}) to registered apps as '{}'",
@@ -433,7 +433,7 @@ pub fn add_to_registered(app: &AwesomeApp) -> String {
 /// Remove an app from registered-apps.json. Only succeeds if not installed.
 pub fn remove_from_registered(key: &str, registered: &mut HashMap<String, Value>) -> bool {
     if registered.remove(key).is_some() {
-        crate::tuix::registry::save_config("registered-apps.json", registered);
+        crate::tuios::registry::save_config("registered-apps.json", registered);
         logging::info(&format!("Awesome Ratatui: removed '{}' from registered apps", key));
         true
     } else {

@@ -1,6 +1,6 @@
-/// TUIX Logging
+/// tuiOS Logging
 ///
-/// Writes to `tuix.log` at the project root. Thread-safe via a global mutex.
+/// Writes to `tuios.log` at the project root. Thread-safe via a global mutex.
 /// Cross-platform (Windows + Linux/Raspberry Pi).
 ///
 /// Severity levels: INFO, WARN, ERROR
@@ -68,10 +68,10 @@ pub fn init() {
     }
 }
 
-/// Returns the path to the log file (project root / tuix.log).
+/// Returns the path to the log file (project root / tuios.log).
 fn log_file_path() -> PathBuf {
     // Use CWD (project root when running via cargo run)
-    PathBuf::from("tuix.log")
+    PathBuf::from("tuios.log")
 }
 
 /// Get the log file path for reading (e.g. by the log viewer).
