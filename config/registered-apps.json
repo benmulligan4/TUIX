@@ -34,7 +34,6 @@
     "default_window_mode": "embedded",
     "description": "Terminal-based Wordle game. Web like experience with keyboard hints and guess reveal animations.",
     "install_methods": [
-      "global",
       "git",
       "local"
     ],

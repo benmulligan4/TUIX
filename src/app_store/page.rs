@@ -15,7 +15,11 @@ use ratatui::{
 };
 use serde_json::Value;
 
+use super::queue::QueueStatus;
 use super::state::{AppStoreFocus, AppStoreState, ConfirmAction, InstallStatus};
+
+/// Width of the install queue column.
+const QUEUE_WIDTH: u16 = 46;
 
 /// Bordered wrapper that makes it obvious which pane the user is navigating in.
 fn pane_block<'a>(title: &'a str, focused: bool, btype: BorderType, accent: Color) -> Block<'a> {
@@ -83,12 +87,16 @@ pub fn render(
                 | AppStoreFocus::FilterPanel
                 | AppStoreFocus::BrowserButton
         );
-    let right_focused = page_focused
-        && !state.browser.active
-        && state.focus == AppStoreFocus::RightPane
-        && !state.terminal_focused;
+    let right_focused =
+        page_focused && !state.browser.active && state.focus == AppStoreFocus::RightPane;
 
-    frame.render_widget(pane_block(" Apps ", left_focused, btype, accent), left_area);
+    let queued = state.queue.active_count();
+    let apps_title = if queued > 0 {
+        format!(" Apps  ⏳{} ", queued)
+    } else {
+        " Apps ".to_string()
+    };
+    frame.render_widget(pane_block(&apps_title, left_focused, btype, accent), left_area);
     render_left_pane(
         frame,
         left_area.inner(Margin { horizontal: 1, vertical: 1 }),
@@ -109,17 +117,34 @@ pub fn render(
             registered,
             &state.install_statuses,
         );
-    } else if state.terminal_visible {
+    } else if state.queue_visible() {
         let right_sections = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
+            .constraints([Constraint::Percentage(55), Constraint::Fill(1)])
             .split(full_right_area);
         frame.render_widget(
             page_label(pane_block(" Details ", right_focused, btype, accent)),
             right_sections[0],
         );
         render_right_pane(frame, right_sections[0], state, registered);
-        render_terminal_panel(frame, right_sections[1], state, btype, accent, page_focused);
+
+        // Terminal on the left of the bottom row, queue on the right
+        let bottom_area = right_sections[1];
+        if bottom_area.width >= 64 {
+            let bottom = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Fill(1), Constraint::Length(QUEUE_WIDTH)])
+                .split(bottom_area);
+            render_terminal_panel(frame, bottom[0], state, btype, accent, page_focused);
+            render_queue_panel(frame, bottom[1], state, btype, accent, page_focused);
+        } else {
+            // Too narrow to show both — whichever pane has focus wins
+            if state.focus == AppStoreFocus::Queue {
+                render_queue_panel(frame, bottom_area, state, btype, accent, page_focused);
+            } else {
+                render_terminal_panel(frame, bottom_area, state, btype, accent, page_focused);
+            }
+        }
     } else {
         frame.render_widget(
             page_label(pane_block(" Details ", right_focused, btype, accent)),
@@ -319,13 +344,18 @@ fn render_left_pane(
                 };
                 let label = meta.get("label").and_then(|v| v.as_str()).unwrap_or(key);
 
-                let installed_indicator = match state.install_statuses.get(key.as_str()) {
-                    Some(InstallStatus::NotInstalled) | None => " ",
-                    _ => "✓",
-                };
-
+                let queued = state.queue.has_active_for(key);
                 let prefix = if is_selected && in_app_list { " » " } else { "   " };
-                let text = format!("{}{} {}", prefix, installed_indicator, label);
+                // ⏳ is double-width, so it replaces the glyph and its trailing space
+                let text = if queued {
+                    format!("{}⏳{}", prefix, label)
+                } else {
+                    let indicator = match state.install_statuses.get(key.as_str()) {
+                        Some(InstallStatus::NotInstalled) | None => " ",
+                        _ => "✓",
+                    };
+                    format!("{}{} {}", prefix, indicator, label)
+                };
 
                 let is_installed = matches!(
                     state.install_statuses.get(key.as_str()),
@@ -335,6 +365,8 @@ fn render_left_pane(
 
                 let style = if is_selected && in_app_list {
                     Style::default().fg(Color::Black).bg(Color::Cyan)
+                } else if queued {
+                    Style::default().fg(Color::Yellow)
                 } else if is_failed {
                     Style::default().fg(Color::Red)
                 } else if is_installed {
@@ -503,6 +535,23 @@ fn render_right_pane(
 
     let in_actions = state.focus == AppStoreFocus::RightPane && state.in_right_actions;
     let mut action_idx: usize = 0;
+    // Line index of every action button, so key handling can scroll it into view
+    let mut action_lines: Vec<usize> = Vec::new();
+
+    macro_rules! push_action {
+        ($text:expr, $base:expr) => {{
+            if action_lines.len() <= action_idx {
+                action_lines.resize(action_idx + 1, lines.len());
+            }
+            action_lines[action_idx] = lines.len();
+            let style = if in_actions && state.right_action_cursor == action_idx {
+                Style::default().fg(Color::Black).bg(Color::Cyan)
+            } else {
+                $base
+            };
+            lines.push(Line::from(Span::styled($text, style)));
+        }};
+    }
 
     let supports_local = super::actions::supports_downloads_install(meta);
     let supports_global = super::actions::supports_path_install(meta);
@@ -510,50 +559,35 @@ fn render_right_pane(
     // Run button (only for installed apps)
     let is_installed = !matches!(install_status, InstallStatus::NotInstalled);
     if is_installed {
-        let run_style = if in_actions && state.right_action_cursor == action_idx {
-            Style::default().fg(Color::Black).bg(Color::Cyan)
+        let locked = state.ui_locked();
+        let run_text = if locked {
+            "  [ Run ]  ⚠ UI locked while the queue is running"
+        } else {
+            "  [ Run ]"
+        };
+        let base = if locked {
+            Style::default().fg(Color::DarkGray)
         } else {
             Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)
         };
-        lines.push(Line::from(Span::styled("  [ Run ]", run_style)));
+        push_action!(run_text, base);
         action_idx += 1;
     }
 
-    // Open Repository
-    let repo_style = if in_actions && state.right_action_cursor == action_idx {
-        Style::default().fg(Color::Black).bg(Color::Cyan)
-    } else {
-        accent_style
-    };
-    lines.push(Line::from(Span::styled("  [ Open Repository ]", repo_style)));
+    push_action!("  [ Open Repository ]", accent_style);
     action_idx += 1;
 
     // Install / Uninstall buttons based on status
     match &install_status {
         InstallStatus::NotInstalled => {
-            let install_style = if in_actions && state.right_action_cursor == action_idx {
-                Style::default().fg(Color::Black).bg(Color::Cyan)
-            } else {
-                Style::default().fg(Color::Green)
-            };
-            lines.push(Line::from(Span::styled("  [ Install ]", install_style)));
+            push_action!("  [ Install ]", Style::default().fg(Color::Green));
         }
         InstallStatus::Global(_) => {
-            let uninstall_style = if in_actions && state.right_action_cursor == action_idx {
-                Style::default().fg(Color::Black).bg(Color::Cyan)
-            } else {
-                Style::default().fg(Color::Red)
-            };
-            lines.push(Line::from(Span::styled("  [ Uninstall from PATH ]", uninstall_style)));
+            push_action!("  [ Uninstall from PATH ]", Style::default().fg(Color::Red));
             action_idx += 1;
 
             if supports_local {
-                let install_local_style = if in_actions && state.right_action_cursor == action_idx {
-                    Style::default().fg(Color::Black).bg(Color::Cyan)
-                } else {
-                    Style::default().fg(Color::Green)
-                };
-                lines.push(Line::from(Span::styled("  [ Install to Downloads ]", install_local_style)));
+                push_action!("  [ Install to Downloads ]", Style::default().fg(Color::Green));
                 action_idx += 1;
             } else {
                 lines.push(Line::from(Span::styled(
@@ -562,29 +596,14 @@ fn render_right_pane(
                 )));
             }
 
-            let open_style = if in_actions && state.right_action_cursor == action_idx {
-                Style::default().fg(Color::Black).bg(Color::Cyan)
-            } else {
-                accent_style
-            };
-            lines.push(Line::from(Span::styled("  [ Open Install Location ]", open_style)));
+            push_action!("  [ Open Install Location ]", accent_style);
         }
         InstallStatus::Local(_) => {
-            let uninstall_style = if in_actions && state.right_action_cursor == action_idx {
-                Style::default().fg(Color::Black).bg(Color::Cyan)
-            } else {
-                Style::default().fg(Color::Red)
-            };
-            lines.push(Line::from(Span::styled("  [ Uninstall from Downloads ]", uninstall_style)));
+            push_action!("  [ Uninstall from Downloads ]", Style::default().fg(Color::Red));
             action_idx += 1;
 
             if supports_global {
-                let install_path_style = if in_actions && state.right_action_cursor == action_idx {
-                    Style::default().fg(Color::Black).bg(Color::Cyan)
-                } else {
-                    Style::default().fg(Color::Green)
-                };
-                lines.push(Line::from(Span::styled("  [ Install to PATH ]", install_path_style)));
+                push_action!("  [ Install to PATH ]", Style::default().fg(Color::Green));
                 action_idx += 1;
             } else {
                 lines.push(Line::from(Span::styled(
@@ -593,32 +612,17 @@ fn render_right_pane(
                 )));
             }
 
-            let open_style = if in_actions && state.right_action_cursor == action_idx {
-                Style::default().fg(Color::Black).bg(Color::Cyan)
-            } else {
-                accent_style
-            };
-            lines.push(Line::from(Span::styled("  [ Open Install Location ]", open_style)));
+            push_action!("  [ Open Install Location ]", accent_style);
         }
         InstallStatus::Both(_, _) => {
-            let uninstall_style = if in_actions && state.right_action_cursor == action_idx {
-                Style::default().fg(Color::Black).bg(Color::Cyan)
-            } else {
-                Style::default().fg(Color::Red)
-            };
-            lines.push(Line::from(Span::styled("  [ Uninstall ]", uninstall_style)));
+            push_action!("  [ Uninstall ]", Style::default().fg(Color::Red));
             action_idx += 1;
 
             // Run source selector
             let current_source = super::actions::get_run_source(&selected_key);
             let source_label = if current_source == "local" { "Downloads" } else { "PATH" };
-            let source_style = if in_actions && state.right_action_cursor == action_idx {
-                Style::default().fg(Color::Black).bg(Color::Cyan)
-            } else {
-                Style::default().fg(Color::Yellow)
-            };
             let source_text = format!("  [ Default Source: {} — press to switch ]", source_label);
-            lines.push(Line::from(Span::styled(source_text, source_style)));
+            push_action!(source_text, Style::default().fg(Color::Yellow));
             if current_source == "local" {
                 lines.push(Line::from(Span::styled(
                     "    ⚠ Downloads source is experimental",
@@ -627,20 +631,10 @@ fn render_right_pane(
             }
             action_idx += 1;
 
-            let open_path_style = if in_actions && state.right_action_cursor == action_idx {
-                Style::default().fg(Color::Black).bg(Color::Cyan)
-            } else {
-                accent_style
-            };
-            lines.push(Line::from(Span::styled("  [ Open PATH Location ]", open_path_style)));
+            push_action!("  [ Open PATH Location ]", accent_style);
             action_idx += 1;
 
-            let open_local_style = if in_actions && state.right_action_cursor == action_idx {
-                Style::default().fg(Color::Black).bg(Color::Cyan)
-            } else {
-                accent_style
-            };
-            lines.push(Line::from(Span::styled("  [ Open Downloads Location ]", open_local_style)));
+            push_action!("  [ Open Downloads Location ]", accent_style);
         }
     }
 
@@ -662,34 +656,27 @@ fn render_right_pane(
         } else {
             let current_mode = super::actions::get_window_mode(&selected_key, registered.get(&selected_key));
             let mode_label = super::actions::window_mode_label(&current_mode);
-            let mode_style = if in_actions && state.right_action_cursor == action_idx {
-                Style::default().fg(Color::Black).bg(Color::Cyan)
-            } else {
-                Style::default().fg(Color::Yellow)
-            };
-            lines.push(Line::from(Span::styled(
-                format!("  [ Window Mode: {} — press to switch ]", mode_label),
-                mode_style,
-            )));
+            let mode_text = format!("  [ Window Mode: {} — press to switch ]", mode_label);
+            push_action!(mode_text, Style::default().fg(Color::Yellow));
         }
     }
 
     // Remove from App Store (only for non-approved, not-installed apps)
     if !is_approved && !is_installed {
         action_idx += 1;
-        let remove_style = if in_actions && state.right_action_cursor == action_idx {
-            Style::default().fg(Color::Black).bg(Color::Cyan)
-        } else {
-            Style::default().fg(Color::Red)
-        };
         lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled("  [ Remove from App Store ]", remove_style)));
+        push_action!("  [ Remove from App Store ]", Style::default().fg(Color::Red));
     }
 
-    // Apply scroll offset
-    let visible_height = right_inner.height as usize;
+    // Record geometry so key handling can scroll the focused action into view
+    let visible_height = (right_inner.height as usize).max(1);
     let total_lines = lines.len();
-    let scroll = state.right_scroll.min(total_lines.saturating_sub(visible_height));
+    state.right_view_height.set(visible_height);
+    state.right_total_lines.set(total_lines);
+    *state.right_action_lines.borrow_mut() = action_lines;
+
+    let max_scroll = total_lines.saturating_sub(visible_height);
+    let scroll = state.right_scroll.min(max_scroll);
     let end = (scroll + visible_height).min(total_lines);
     let visible_lines: Vec<Line> = if total_lines > visible_height {
         lines[scroll..end].to_vec()
@@ -708,45 +695,80 @@ fn render_terminal_panel(
     accent: Color,
     page_focused: bool,
 ) {
-    let title = if state.operation_running {
-        " Terminal Output  [Shift+Tab to scroll] [operation in progress] "
-    } else if state.terminal_focused {
-        " Terminal Output  [Q to exit] [Shift+C to close] "
-    } else if !state.terminal_output.is_empty() {
-        " Terminal Output  [Shift+Tab to enter] [Shift+C to close] "
-    } else {
-        " Terminal Output  [Shift+Tab to enter] "
+    let focused = state.focus == AppStoreFocus::Terminal;
+    let pinned = state.viewing_item.is_some();
+
+    // The job description lives in the border title rather than a separate banner
+    let mut title = match state.queue.running() {
+        Some(item) if !pinned => {
+            let pos = state
+                .queue
+                .running_position()
+                .map(|(i, n)| format!("  ({} of {})", i, n))
+                .unwrap_or_default();
+            format!(
+                " ▸ {}ing {} {} {}{} ",
+                item.op.verb(),
+                item.label,
+                item.op.arrow(),
+                item.op.target_label(),
+                pos
+            )
+        }
+        _ => match state.viewed_item() {
+            Some(item) => format!(
+                " {} {} {} {} — {} ",
+                item.op.verb(),
+                item.label,
+                item.op.arrow(),
+                item.op.target_label(),
+                item.status.label()
+            ),
+            None => " Terminal Output ".to_string(),
+        },
     };
+    if state.queue.paused && state.queue.pending_count() > 0 {
+        title.push_str(&format!(
+            "[PAUSED — {} waiting, P to resume] ",
+            state.queue.pending_count()
+        ));
+    }
+    if !focused {
+        title.push_str("[Shift+Tab to enter] ");
+    } else {
+        title.push_str("[W/S scroll] ");
+    }
 
     frame.render_widget(
-        pane_block(title, page_focused && state.terminal_focused, btype, accent),
+        pane_block(&title, page_focused && focused, btype, accent),
         area,
     );
 
     let inner = area.inner(Margin { horizontal: 1, vertical: 1 });
     let visible_height = inner.height as usize;
+    state.terminal_view_height.set(visible_height.max(1));
 
+    let log = state.visible_log();
     let mut lines: Vec<Line> = Vec::new();
 
-    if state.terminal_output.is_empty() {
+    if log.is_empty() {
         lines.push(Line::from(Span::styled(
-            "  (Install or uninstall an app to see output here)",
+            "  (waiting for output…)",
             Style::default().fg(Color::DarkGray),
         )));
     } else {
-        let max_scroll = state.terminal_output.len().saturating_sub(visible_height);
-        let scroll = state.terminal_scroll.min(max_scroll);
-        let end = (scroll + visible_height).min(state.terminal_output.len());
-        for line in &state.terminal_output[scroll..end] {
+        let scroll = state.effective_terminal_scroll();
+        let end = (scroll + visible_height).min(log.len());
+        for line in &log[scroll..end] {
             lines.push(Line::from(Span::styled(
                 format!("  {}", line),
-                Style::default().fg(Color::White),
+                Style::default().fg(log_color(line)),
             )));
         }
 
-        // Scroll indicator
-        if state.terminal_focused && state.terminal_output.len() > visible_height {
-            let info = format!(" {}/{} ", scroll + 1, state.terminal_output.len());
+        if focused && log.len() > visible_height {
+            // Counted against the last scrollable position, so the bottom reads N/N
+            let info = format!(" {}/{} ", scroll, log.len() - visible_height);
             let info_width = info.len() as u16;
             if area.width > info_width + 2 {
                 let indicator_rect = Rect {
@@ -766,6 +788,174 @@ fn render_terminal_panel(
     frame.render_widget(Paragraph::new(lines), inner);
 }
 
+fn log_color(line: &str) -> Color {
+    let t = line.trim_start();
+    if t.starts_with('✗') || t.starts_with("error") || t.starts_with("error:") {
+        Color::Red
+    } else if t.starts_with('✓') {
+        Color::Green
+    } else if t.starts_with('⚠') || t.starts_with("warning") {
+        Color::Yellow
+    } else {
+        Color::White
+    }
+}
+
+fn render_queue_panel(
+    frame: &mut Frame,
+    area: Rect,
+    state: &AppStoreState,
+    btype: BorderType,
+    accent: Color,
+    page_focused: bool,
+) {
+    let focused = state.focus == AppStoreFocus::Queue;
+    let active = state.queue.active_count();
+    let title = if active > 0 {
+        format!(" Install Queue ({}) ", active)
+    } else {
+        " Install Queue ".to_string()
+    };
+    frame.render_widget(
+        pane_block(&title, page_focused && focused, btype, accent),
+        area,
+    );
+
+    let inner = area.inner(Margin { horizontal: 1, vertical: 1 });
+    let width = inner.width as usize;
+    let hint_style = Style::default().fg(Color::DarkGray);
+
+    // Queue-wide hotkeys are pinned to the bottom; per-job ones live under the
+    // selected row so the two never get confused.
+    let mut footer: Vec<Line> = Vec::new();
+    footer.push(Line::from(Span::styled("─".repeat(width), hint_style)));
+    if focused {
+        let paused = if state.queue.paused { "P resume" } else { "P pause" };
+        footer.push(Line::from(Span::styled(
+            format!(" {}   X clear queue", paused),
+            hint_style,
+        )));
+    } else {
+        footer.push(Line::from(Span::styled(
+            " Shift+Tab to enter",
+            hint_style,
+        )));
+    }
+
+    let mut lines: Vec<Line> = Vec::new();
+    let mut cursor_line = 0usize;
+
+    if state.queue.items.is_empty() {
+        lines.push(Line::from(Span::styled(
+            " Queue is empty",
+            Style::default().fg(Color::DarkGray),
+        )));
+    }
+
+    for (i, item) in state.queue.items.iter().enumerate() {
+        let selected = focused && i == state.queue.cursor;
+        let expanded = selected && state.queue.item_focused;
+        if selected {
+            cursor_line = lines.len();
+        }
+        let base = match item.status {
+            QueueStatus::Pending => Color::Gray,
+            QueueStatus::Running => Color::Yellow,
+            QueueStatus::Done => Color::Green,
+            QueueStatus::Failed => Color::Red,
+        };
+        let style = if expanded {
+            Style::default().fg(Color::Black).bg(base).add_modifier(Modifier::BOLD)
+        } else if selected {
+            Style::default().fg(Color::Black).bg(base)
+        } else if item.status == QueueStatus::Running {
+            Style::default().fg(base).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(base)
+        };
+
+        let viewing = state.viewing_item == Some(item.id);
+        let marker = if viewing { "│" } else { " " };
+        let left = format!(
+            "{}{} {} {}",
+            marker,
+            item.status.glyph(),
+            item.op.verb(),
+            item.label
+        );
+        let right = format!("{} {} ", item.op.arrow(), item.op.target_label());
+        let (lw, rw) = (left.chars().count(), right.chars().count());
+        let row = if lw + rw + 1 <= width {
+            format!("{}{}{}", left, " ".repeat(width - lw - rw), right)
+        } else {
+            pad_clip(&format!("{} {}", left, right), width)
+        };
+        lines.push(Line::from(Span::styled(row, style)));
+
+        if expanded {
+            let key_style = Style::default().fg(Color::Cyan);
+            lines.push(Line::from(Span::styled(
+                format!("     {} — {}", item.op.destination_phrase(), item.status.label()),
+                Style::default().fg(base),
+            )));
+            if item.status == QueueStatus::Failed {
+                if let Some(note) = &item.note {
+                    for l in wrap_text(note, width.saturating_sub(6)) {
+                        lines.push(Line::from(Span::styled(
+                            format!("     {}", l),
+                            Style::default().fg(Color::Red),
+                        )));
+                    }
+                }
+            }
+            let mut opts: Vec<(&str, &str)> = vec![("Enter", "view log")];
+            if state.queue.can_move(i, true) || state.queue.can_move(i, false) {
+                opts.push(("↑ / ↓", "move in queue"));
+            }
+            if item.status == QueueStatus::Pending {
+                opts.push(("C", "cancel job"));
+            }
+            if item.status == QueueStatus::Failed {
+                opts.push(("R", "retry job"));
+            }
+            opts.push(("Q / ←", "deselect"));
+            for (k, desc) in opts {
+                lines.push(Line::from(vec![
+                    Span::styled(format!("     {:<7}", k), key_style),
+                    Span::styled(desc, Style::default().fg(Color::White)),
+                ]));
+            }
+        }
+    }
+
+    // Keep the selected row on screen above the pinned footer
+    let body_height = (inner.height as usize).saturating_sub(footer.len());
+    let mut out: Vec<Line> = if lines.len() > body_height {
+        let start = cursor_line
+            .saturating_sub(body_height / 3)
+            .min(lines.len() - body_height);
+        lines[start..start + body_height].to_vec()
+    } else {
+        lines
+    };
+    while out.len() < body_height {
+        out.push(Line::from(""));
+    }
+    out.extend(footer);
+
+    frame.render_widget(Paragraph::new(out), inner);
+}
+
+/// Pad to the pane width so the selection highlight fills the whole row.
+fn pad_clip(text: &str, width: usize) -> String {
+    let mut s: String = text.chars().take(width).collect();
+    let len = s.chars().count();
+    if len < width {
+        s.push_str(&" ".repeat(width - len));
+    }
+    s
+}
+
 fn render_confirm_dialog(frame: &mut Frame, area: Rect, state: &AppStoreState) {
     let confirm = match &state.confirm_dialog {
         Some(c) => c,
@@ -773,14 +963,23 @@ fn render_confirm_dialog(frame: &mut Frame, area: Rect, state: &AppStoreState) {
     };
 
     let is_choose = matches!(confirm, ConfirmAction::UninstallChoose(_));
-    let app_name = match confirm {
-        ConfirmAction::UninstallGlobal(n)
-        | ConfirmAction::UninstallLocal(n)
-        | ConfirmAction::UninstallChoose(n) => n.as_str(),
+    let (title, msg, accent) = match confirm {
+        ConfirmAction::ClearQueue => (
+            " Clear Install Queue ",
+            "Clear finished jobs and cancel everything still pending?".to_string(),
+            Color::Yellow,
+        ),
+        ConfirmAction::UninstallChoose(n) => {
+            (" Uninstall ", format!("Uninstall {} from:", n), Color::Red)
+        }
+        ConfirmAction::UninstallGlobal(n) | ConfirmAction::UninstallLocal(n) => (
+            " Confirm Uninstall ",
+            format!("Are you sure you want to uninstall {}?", n),
+            Color::Red,
+        ),
     };
 
     if is_choose {
-        let msg = format!("Uninstall {} from:", app_name);
         let width = (msg.len() + 10).max(40).min(area.width as usize) as u16;
         let height = 8;
         let popup_rect = Rect {
@@ -793,8 +992,8 @@ fn render_confirm_dialog(frame: &mut Frame, area: Rect, state: &AppStoreState) {
         frame.render_widget(
             Block::default()
                 .borders(Borders::ALL)
-                .title(" Uninstall ")
-                .style(Style::default().fg(Color::Red).bg(Color::Black)),
+                .title(title)
+                .style(Style::default().fg(accent).bg(Color::Black)),
             popup_rect,
         );
         let inner = popup_rect.inner(Margin { horizontal: 1, vertical: 1 });
@@ -814,7 +1013,6 @@ fn render_confirm_dialog(frame: &mut Frame, area: Rect, state: &AppStoreState) {
         }
         frame.render_widget(Paragraph::new(lines), inner);
     } else {
-        let msg = format!("Are you sure you want to uninstall {}?", app_name);
         let width = (msg.len() + 6).min(area.width as usize) as u16;
         let height = 5;
         let popup_rect = Rect {
@@ -827,15 +1025,15 @@ fn render_confirm_dialog(frame: &mut Frame, area: Rect, state: &AppStoreState) {
         frame.render_widget(
             Block::default()
                 .borders(Borders::ALL)
-                .title(" Confirm Uninstall ")
-                .style(Style::default().fg(Color::Red).bg(Color::Black)),
+                .title(title)
+                .style(Style::default().fg(accent).bg(Color::Black)),
             popup_rect,
         );
         let inner = popup_rect.inner(Margin { horizontal: 1, vertical: 1 });
         let yes_style = if state.confirm_cursor == 0 {
-            Style::default().fg(Color::Black).bg(Color::Red)
+            Style::default().fg(Color::Black).bg(accent)
         } else {
-            Style::default().fg(Color::Red)
+            Style::default().fg(accent)
         };
         let no_style = if state.confirm_cursor == 1 {
             Style::default().fg(Color::Black).bg(Color::Green)

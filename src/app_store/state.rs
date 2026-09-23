@@ -68,6 +68,7 @@ pub enum ConfirmAction {
     UninstallGlobal(String),
     UninstallLocal(String),
     UninstallChoose(String),
+    ClearQueue,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,6 +81,8 @@ pub enum AppStoreFocus {
     ConfirmDialog,
     InstallLocationDialog,
     BrowserButton,
+    Terminal,
+    Queue,
 }
 
 #[derive(Debug, Clone)]
@@ -106,11 +109,14 @@ pub struct AppStoreState {
     pub filter_categories: HashSet<String>,
     pub search_query: String,
     pub search_active: bool,
-    pub terminal_output: Vec<String>,
-    pub terminal_focused: bool,
     pub terminal_scroll: usize,
-    pub terminal_visible: bool,
-    pub operation_running: bool,
+    /// Follow the tail of the log instead of holding the manual scroll position
+    pub terminal_follow: bool,
+    /// Viewport height recorded by the renderer, so key handling can clamp scrolling
+    pub terminal_view_height: std::cell::Cell<usize>,
+    /// Queue item whose log the terminal is showing; None follows the running job
+    pub viewing_item: Option<u64>,
+    pub queue: super::queue::InstallQueue,
     pub confirm_dialog: Option<ConfirmAction>,
     pub confirm_cursor: usize,
     pub install_location_dialog: bool,
@@ -124,6 +130,11 @@ pub struct AppStoreState {
     pub install_statuses: HashMap<String, InstallStatus>,
     pub right_action_cursor: usize,
     pub in_right_actions: bool,
+    /// Details pane geometry recorded by the renderer, so key handling can keep
+    /// the focused action button on screen.
+    pub right_action_lines: std::cell::RefCell<Vec<usize>>,
+    pub right_view_height: std::cell::Cell<usize>,
+    pub right_total_lines: std::cell::Cell<usize>,
     /// Shared output buffer for background install/uninstall thread
     pub thread_output: Arc<Mutex<Vec<String>>>,
     /// Signals that the background operation has completed
@@ -133,12 +144,6 @@ pub struct AppStoreState {
     /// Warning raised by the background operation, e.g. files left behind because
     /// they were still in use. Shown as a popup when the operation finishes.
     pub thread_warning: Arc<Mutex<Option<String>>>,
-    /// The install location used for the current operation (for post-install config update)
-    pub pending_install_location: Option<InstallLocation>,
-    /// The app key for the current background operation
-    pub pending_op_key: Option<String>,
-    /// Whether the pending operation is an install (true) or uninstall (false)
-    pub pending_is_install: bool,
     /// App queued for installation from the browser, independent of the left-pane cursor
     pub pending_install_key: Option<String>,
     /// Cargo bin directory contents captured before the running install started
@@ -165,11 +170,11 @@ impl AppStoreState {
             filter_categories: HashSet::new(),
             search_query: String::new(),
             search_active: false,
-            terminal_output: Vec::new(),
-            terminal_focused: false,
             terminal_scroll: 0,
-            terminal_visible: false,
-            operation_running: false,
+            terminal_follow: true,
+            terminal_view_height: std::cell::Cell::new(10),
+            viewing_item: None,
+            queue: super::queue::InstallQueue::new(),
             confirm_dialog: None,
             confirm_cursor: 0,
             install_location_dialog: false,
@@ -182,13 +187,13 @@ impl AppStoreState {
             install_statuses: HashMap::new(),
             right_action_cursor: 0,
             in_right_actions: false,
+            right_action_lines: std::cell::RefCell::new(Vec::new()),
+            right_view_height: std::cell::Cell::new(20),
+            right_total_lines: std::cell::Cell::new(0),
             thread_output: Arc::new(Mutex::new(Vec::new())),
             thread_done: Arc::new(AtomicBool::new(false)),
             thread_success: Arc::new(AtomicBool::new(false)),
             thread_warning: Arc::new(Mutex::new(None)),
-            pending_install_location: None,
-            pending_op_key: None,
-            pending_is_install: false,
             pending_install_key: None,
             pre_install_bins: HashSet::new(),
             failed_installs: HashSet::new(),
@@ -211,41 +216,43 @@ impl AppStoreState {
         self.refresh_cursor_idx(registered)
     }
 
-    /// Sync output from background thread and check completion.
+    /// Sync output from the background thread into the running item's log.
     /// Returns true if the operation just completed.
     pub fn poll_operation(&mut self) -> bool {
-        if !self.operation_running {
+        if self.queue.running_index().is_none() {
             return false;
         }
-        // Sync output from thread
+        let mut drained: Vec<String> = Vec::new();
         if let Ok(mut buf) = self.thread_output.try_lock() {
-            if !buf.is_empty() {
-                self.terminal_output.append(&mut *buf);
-                // Auto-scroll to bottom
-                let visible = 10usize; // approximate
-                self.terminal_scroll = self.terminal_output.len().saturating_sub(visible);
+            drained.append(&mut *buf);
+        }
+        let finished = self.thread_done.load(Ordering::Relaxed);
+        if finished {
+            // Final sync — the thread may have written more between the two locks
+            if let Ok(mut buf) = self.thread_output.try_lock() {
+                drained.append(&mut *buf);
             }
         }
-        // Check completion
-        if self.thread_done.load(Ordering::Relaxed) {
-            self.operation_running = false;
-            // Final sync
-            if let Ok(mut buf) = self.thread_output.try_lock() {
-                self.terminal_output.append(&mut *buf);
+        if !drained.is_empty() {
+            if let Some(item) = self.queue.running_mut() {
+                item.extend_log(drained);
             }
+        }
+        if finished {
             return true;
         }
         false
     }
 
-    /// Start a new background operation (resets shared state).
-    pub fn start_operation(&mut self, key: String, is_install: bool, location: Option<InstallLocation>) {
-        self.terminal_output.clear();
-        self.terminal_visible = true;
-        self.operation_running = true;
-        self.pending_op_key = Some(key);
-        self.pending_is_install = is_install;
-        self.pending_install_location = location;
+    /// Prepare the shared channel for the next job and mark it running.
+    /// Returns the id of the job that was started.
+    pub fn start_next_job(&mut self) -> Option<u64> {
+        let id = self.queue.start_next()?;
+        let is_install = self
+            .queue
+            .item_by_id(id)
+            .map(|i| i.op.is_install())
+            .unwrap_or(false);
         self.pre_install_bins = if is_install {
             super::actions::snapshot_cargo_bin()
         } else {
@@ -255,18 +262,75 @@ impl AppStoreState {
         self.thread_done = Arc::new(AtomicBool::new(false));
         self.thread_success = Arc::new(AtomicBool::new(false));
         self.thread_warning = Arc::new(Mutex::new(None));
+        // Snap the terminal back onto whatever is actually running
+        self.viewing_item = None;
+        self.terminal_follow = true;
+        self.terminal_scroll = 0;
+        Some(id)
+    }
+    /// True while a job is running or waiting to run — drives the UI lock.
+    pub fn ui_locked(&self) -> bool {
+        self.queue.is_active()
+    }
+
+    /// The terminal and queue panes appear together, and only when there is
+    /// something in the queue to show.
+    pub fn queue_visible(&self) -> bool {
+        !self.queue.is_empty()
+    }
+
+    pub fn terminal_visible(&self) -> bool {
+        self.queue_visible()
+    }
+
+    /// The queue item the terminal pane is currently showing.
+    pub fn viewed_item(&self) -> Option<&super::queue::QueueItem> {
+        match self.viewing_item {
+            Some(id) => self.queue.item_by_id(id).or_else(|| self.queue.running()),
+            None => self.queue.running().or_else(|| self.queue.items.last()),
+        }
+    }
+
+    pub fn visible_log(&self) -> &[String] {
+        self.viewed_item().map(|i| i.log.as_slice()).unwrap_or(&[])
+    }
+
+    pub fn terminal_max_scroll(&self) -> usize {
+        self.visible_log()
+            .len()
+            .saturating_sub(self.terminal_view_height.get().max(1))
+    }
+
+    /// Scroll offset actually used for drawing — follow mode pins it to the tail.
+    pub fn effective_terminal_scroll(&self) -> usize {
+        let max = self.terminal_max_scroll();
+        if self.terminal_follow {
+            max
+        } else {
+            self.terminal_scroll.min(max)
+        }
     }
 
     pub fn reset_right_pane(&mut self) {
         self.right_scroll = 0;
         self.right_action_cursor = 0;
         self.in_right_actions = false;
-        if !self.operation_running {
-            self.terminal_visible = false;
-            self.terminal_output.clear();
-            self.terminal_focused = false;
-            self.terminal_scroll = 0;
+    }
+
+    /// Scroll the details pane just enough to bring the focused action into view.
+    pub fn ensure_action_visible(&mut self) {
+        let target = match self.right_action_lines.borrow().get(self.right_action_cursor) {
+            Some(&t) => t,
+            None => return,
+        };
+        let height = self.right_view_height.get().max(1);
+        let max_scroll = self.right_total_lines.get().saturating_sub(height);
+        if target < self.right_scroll {
+            self.right_scroll = target;
+        } else if target >= self.right_scroll + height {
+            self.right_scroll = target + 1 - height;
         }
+        self.right_scroll = self.right_scroll.min(max_scroll);
     }
 
     /// Build filtered and sorted list from registered apps.
