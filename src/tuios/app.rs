@@ -19,6 +19,7 @@ use ratatui::{
 };
 use serde_json::Value;
 
+use super::boot_animation;
 use super::input_handler::{action_to_key_name, map_key};
 use super::models::{Action, AppStatus, FocusTarget, TuiosState};
 use super::process_manager;
@@ -985,6 +986,9 @@ fn handle_main_key(
                         ss.browser.recompute_visible();
                     }
                     BrowserFocus::DescriptionToggle => {
+                        ss.browser.focus = BrowserFocus::List;
+                    }
+                    BrowserFocus::RepoButton => {
                         ss.browser.focus = BrowserFocus::List;
                     }
                     BrowserFocus::List => {
@@ -2389,7 +2393,24 @@ fn handle_browser_key(
                     }
                 }
                 Action::Enter | Action::Down => {
+                    ss.browser.focus = BrowserFocus::RepoButton;
+                }
+                _ => {}
+            }
+        }
+        BrowserFocus::RepoButton => {
+            match action {
+                Action::Up => {
+                    ss.browser.focus = BrowserFocus::SearchBar;
+                }
+                Action::Down => {
                     ss.browser.focus = BrowserFocus::DescriptionToggle;
+                }
+                Action::Enter => {
+                    app_store::actions::open_url(awesome_ratatui_manager::REPO_URL);
+                }
+                Action::Back => {
+                    ss.browser.focus = BrowserFocus::List;
                 }
                 _ => {}
             }
@@ -2397,7 +2418,7 @@ fn handle_browser_key(
         BrowserFocus::DescriptionToggle => {
             match action {
                 Action::Up => {
-                    ss.browser.focus = BrowserFocus::SearchBar;
+                    ss.browser.focus = BrowserFocus::RepoButton;
                 }
                 Action::Down => {
                     ss.browser.focus = BrowserFocus::List;
@@ -2706,6 +2727,16 @@ fn run_app() -> bool {
     execute!(stdout, EnterAlternateScreen).expect("Failed to enter alternate screen");
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend).expect("Failed to create terminal");
+
+    {
+        let s = settings::persistence::load();
+        if settings::persistence::get_bool(&s, "appearance.intro_animation_enabled", true) {
+            let accent = settings::pages::appearance::color_from_name(
+                &settings::persistence::get_str(&s, "appearance.accent_color", "Cyan"),
+            );
+            let _ = boot_animation::play(&mut terminal, accent);
+        }
+    }
 
     loop {
         // Drive the install queue: finish the running job, then start the next one

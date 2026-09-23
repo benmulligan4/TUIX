@@ -116,6 +116,17 @@ fn render_app_list(
     };
     lines.push(Line::from(Span::styled(search_text, search_style)));
 
+    // Open repo button
+    let repo_style = if browser.focus == BrowserFocus::RepoButton {
+        Style::default().fg(Color::Black).bg(Color::Cyan)
+    } else {
+        Style::default().fg(Color::White)
+    };
+    lines.push(Line::from(Span::styled(
+        " [→] Open Awesome Ratatui Repo",
+        repo_style,
+    )));
+
     // Show descriptions toggle
     let toggle_style = if browser.focus == BrowserFocus::DescriptionToggle {
         Style::default().fg(Color::Black).bg(Color::Cyan)

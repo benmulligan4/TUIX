@@ -83,6 +83,7 @@ pub fn render(frame: &mut Frame, area: Rect, cursor: usize, _scroll: usize, edit
     let status_bar = persistence::get_bool(&settings, "appearance.status_bar_enabled", false);
     let keep_open = persistence::get_bool(&settings, "appearance.new_window_keeps_tuios_open", false);
     let navbar_bottom = persistence::get_str(&settings, "appearance.navbar_position", "Top") == "Bottom";
+    let intro_on = persistence::get_bool(&settings, "appearance.intro_animation_enabled", true);
 
     let items: Vec<(&str, String)> = vec![
         ("tuiOS Colour", accent),
@@ -97,6 +98,7 @@ pub fn render(frame: &mut Frame, area: Rect, cursor: usize, _scroll: usize, edit
             if keep_open { "Keep tuiOS open".into() } else { "Close tuiOS while running".into() },
         ),
         ("Navigation Bar", if navbar_bottom { "Bottom".into() } else { "Top".into() }),
+        ("Intro Animation", if intro_on { "Enabled".into() } else { "Disabled".into() }),
     ];
 
     let value_style = Style::default().fg(Color::White);
@@ -133,7 +135,7 @@ pub fn is_edit_mode_item(cursor: usize) -> bool {
     matches!(cursor, 0 | 4 | 5) // tuiOS Colour, Default Dashboard, Border Style
 }
 
-pub fn item_count() -> usize { 9 }
+pub fn item_count() -> usize { 10 }
 
 /// Cycle a multi-option item forward (+1) or backward (-1).
 pub fn handle_cycle(cursor: usize, forward: bool) {
@@ -211,6 +213,11 @@ pub fn handle_enter(cursor: usize) {
             let next = if current == "Bottom" { "Top" } else { "Bottom" };
             persistence::set(&mut settings, "appearance.navbar_position", serde_json::Value::String(next.to_string()));
             crate::utilities::logging::settings(&format!("Navigation bar moved to {}", next.to_lowercase()));
+        }
+        9 => {
+            let current = persistence::get_bool(&settings, "appearance.intro_animation_enabled", true);
+            persistence::set(&mut settings, "appearance.intro_animation_enabled", serde_json::Value::Bool(!current));
+            crate::utilities::logging::settings(&format!("Intro animation {}", if !current { "enabled" } else { "disabled" }));
         }
         _ => {}
     }
