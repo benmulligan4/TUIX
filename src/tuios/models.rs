@@ -1,4 +1,4 @@
-/// TUIX — shared enums, structs, and state containers.
+/// tuiOS — shared enums, structs, and state containers.
 
 use chrono::{DateTime, Utc};
 use std::time::Instant;
@@ -44,7 +44,7 @@ pub struct RunningApp {
 
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
-pub struct TuixState {
+pub struct TuiosState {
     pub focus: FocusTarget,
     pub active_dashboard: String,
     /// "settings" | "touchscreen" | "system" | None
@@ -71,12 +71,12 @@ pub struct TuixState {
     pub run_source_dialog: Option<(String, Vec<String>, Vec<String>, usize)>,
     /// Flag: main loop should re-sync installed apps and refresh nav
     pub needs_sync: bool,
-    /// Command the main loop should launch outside the TUIX container
+    /// Command the main loop should launch outside the tuiOS container
     /// (new OS window, or by handing over the current terminal).
     pub pending_foreground: Option<Vec<String>>,
 }
 
-impl TuixState {
+impl TuiosState {
     pub fn new(default_dashboard: String) -> Self {
         Self {
             focus: FocusTarget::Navbar,

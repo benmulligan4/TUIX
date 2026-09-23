@@ -1,7 +1,7 @@
 #!/bin/bash
 # Install third-party dashboards and applications with source "global" via cargo install.
 # Reads config/dashboards.json and config/apps.json for entries with source "global".
-# Logs actions to tuix.log.
+# Logs actions to tuios.log.
 
 set -e
 
@@ -10,7 +10,7 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 DASHBOARDS_JSON="$PROJECT_ROOT/config/dashboards.json"
 APPS_JSON="$PROJECT_ROOT/config/apps.json"
-LOG_FILE="$PROJECT_ROOT/tuix.log"
+LOG_FILE="$PROJECT_ROOT/tuios.log"
 
 log_entry() {
     local level="$1"
@@ -63,7 +63,7 @@ for name, meta in data.items():
     done <<< "$entries"
 }
 
-echo "=== TUIX Install Script (Global) ==="
+echo "=== tuiOS Install Script (Global) ==="
 echo ""
 
 install_from_json "$DASHBOARDS_JSON" "Dashboards"

@@ -38,7 +38,7 @@ pub fn render(
         "Check VNC Viewer Status".to_string(),
         "Enable VNC Viewer".to_string(),
         "Disable VNC Viewer".to_string(),
-        "Restore TUIX Settings to Default".to_string(),
+        "Restore tuiOS Settings to Default".to_string(),
     ];
 
     let value_style = Style::default().fg(Color::White);
@@ -236,7 +236,7 @@ pub fn handle_enter(cursor: usize, ss: &mut SettingsState) {
                     "clock_show_seconds": false,
                     "border_style": "Rounded",
                     "status_bar_enabled": false,
-                    "new_window_keeps_tuix_open": false,
+                    "new_window_keeps_tuios_open": false,
                     "navbar_position": "Top"
                 },
                 "display": {

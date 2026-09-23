@@ -1,4 +1,4 @@
-/// TUIX — main shell: event loop, custom navbar, and main container rendering.
+/// tuiOS — main shell: event loop, custom navbar, and main container rendering.
 
 use std::io;
 use std::process::Command;
@@ -20,7 +20,7 @@ use ratatui::{
 use serde_json::Value;
 
 use super::input_handler::{action_to_key_name, map_key};
-use super::models::{Action, AppStatus, FocusTarget, TuixState};
+use super::models::{Action, AppStatus, FocusTarget, TuiosState};
 use super::process_manager;
 use super::registry;
 
@@ -168,7 +168,7 @@ fn build_nav_items(
 // Custom navbar renderer
 // ---------------------------------------------------------------------------
 
-fn render_navbar(frame: &mut Frame, area: Rect, nav_items: &[NavItem], state: &TuixState) {
+fn render_navbar(frame: &mut Frame, area: Rect, nav_items: &[NavItem], state: &TuiosState) {
     let focused = state.focus == FocusTarget::Navbar;
     let labels: Vec<&str> = nav_items.iter().map(|i| i.label.as_str()).collect();
 
@@ -229,7 +229,7 @@ fn render_navbar(frame: &mut Frame, area: Rect, nav_items: &[NavItem], state: &T
     }
 }
 
-fn render_dropdown(frame: &mut Frame, area: Rect, nav_items: &[NavItem], state: &TuixState, open_upward: bool) {
+fn render_dropdown(frame: &mut Frame, area: Rect, nav_items: &[NavItem], state: &TuiosState, open_upward: bool) {
     if !state.nav_expanded {
         return;
     }
@@ -330,7 +330,7 @@ fn status_color(status: AppStatus) -> Color {
 // System page renderer
 // ---------------------------------------------------------------------------
 
-fn render_system_page(frame: &mut Frame, area: Rect, state: &TuixState, border_style: Style, border_type: BorderType) {
+fn render_system_page(frame: &mut Frame, area: Rect, state: &TuiosState, border_style: Style, border_type: BorderType) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(border_type)
@@ -439,16 +439,16 @@ fn render_app_log(frame: &mut Frame, area: Rect, app_name: &str, border_style: S
 }
 
 // ---------------------------------------------------------------------------
-// Logs page renderer — shows tuix.log with colored severity levels
+// Logs page renderer — shows tuios.log with colored severity levels
 // ---------------------------------------------------------------------------
 
-fn render_logs_page(frame: &mut Frame, area: Rect, state: &TuixState, border_style: Style, border_type: BorderType) {
+fn render_logs_page(frame: &mut Frame, area: Rect, state: &TuiosState, border_style: Style, border_type: BorderType) {
     use ratatui::text::{Line, Span};
 
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(border_type)
-        .title(" Logs — tuix.log ")
+        .title(" Logs — tuios.log ")
         .title_alignment(ratatui::layout::Alignment::Right)
         .style(border_style);
     frame.render_widget(block, area);
@@ -569,7 +569,7 @@ fn render_logs_page(frame: &mut Frame, area: Rect, state: &TuixState, border_sty
 fn render_main(
     frame: &mut Frame,
     area: Rect,
-    state: &mut TuixState,
+    state: &mut TuiosState,
     active_internal_app: &mut Option<InternalApp>,
     active_installed_dash: &mut Option<InstalledDashboard>,
     active_installed_app: &mut Option<InstalledDashboard>,
@@ -627,7 +627,7 @@ fn render_main(
 fn render_no_dashboard(frame: &mut Frame, area: Rect, border_style: Style) {
     let block = Block::default()
         .borders(Borders::ALL)
-        .title(" TUIX ")
+        .title(" tuiOS ")
         .style(border_style);
     frame.render_widget(block, area);
     let inner = area.inner(Margin { horizontal: 1, vertical: 1 });
@@ -674,7 +674,7 @@ enum NavResult {
 
 fn handle_navbar_key(
     action: Action,
-    state: &mut TuixState,
+    state: &mut TuiosState,
     nav_items: &[NavItem],
     apps_registry: &std::collections::HashMap<String, Value>,
     dashboards_registry: &std::collections::HashMap<String, Value>,
@@ -775,7 +775,7 @@ fn handle_navbar_key(
 
 fn execute_action(
     data: &str,
-    state: &mut TuixState,
+    state: &mut TuiosState,
     apps_registry: &std::collections::HashMap<String, Value>,
     dashboards_registry: &std::collections::HashMap<String, Value>,
     registered_apps: &std::collections::HashMap<String, Value>,
@@ -813,7 +813,7 @@ fn execute_action(
                     return NavResult::None;
                 }
 
-                logging::info(&format!("Launching dashboard {} in embedded TUIX mode", name));
+                logging::info(&format!("Launching dashboard {} in embedded tuiOS mode", name));
                 state.active_dashboard = name.to_string();
                 state.active_page = None;
                 state.active_app = None;
@@ -891,7 +891,7 @@ fn execute_action(
                     return NavResult::None;
                 }
 
-                logging::info(&format!("Launching {} in embedded TUIX mode", name));
+                logging::info(&format!("Launching {} in embedded tuiOS mode", name));
                 *active_installed_app = InstalledDashboard::start(name, name, &launch_cmd, 80, 24);
                 state.active_app = Some(name.to_string());
                 state.active_page = None;
@@ -920,9 +920,9 @@ fn execute_action(
         logging::info("System restart requested");
         return NavResult::Restart;
     } else if data == "system:open_repo" {
-        logging::info("Opening TUIX Git repository");
-        let url = "https://github.com/benmulligan4/TUIX";
-        // Use spawn() (non-blocking) so TUIX doesn't freeze waiting for the browser
+        logging::info("Opening tuiOS Git repository");
+        let url = "https://github.com/benmulligan4/tuiOS";
+        // Use spawn() (non-blocking) so tuiOS doesn't freeze waiting for the browser
         let spawned = if cfg!(target_os = "windows") {
             Command::new("cmd").args(["/C", "start", "", url]).spawn().is_ok()
         } else if cfg!(target_os = "macos") {
@@ -953,7 +953,7 @@ enum MainResult {
 
 fn handle_main_key(
     action: Action,
-    state: &mut TuixState,
+    state: &mut TuiosState,
     active_internal_app: &mut Option<InternalApp>,
     active_installed_dash: &mut Option<InstalledDashboard>,
     active_installed_app: &mut Option<InstalledDashboard>,
@@ -962,7 +962,7 @@ fn handle_main_key(
     // App store page handles its own Quit/Back (pane/dialog switching)
     if matches!(state.active_page.as_deref(), Some("appstore")) {
         if action == Action::Quit {
-            // Esc in appstore: close dialogs or navigate back, don't quit TUIX
+            // Esc in appstore: close dialogs or navigate back, don't quit tuiOS
             let ss = &mut state.app_store;
             if ss.confirm_dialog.is_some() {
                 ss.confirm_dialog = None;
@@ -1262,7 +1262,7 @@ fn app_label(key: &str, registered: &std::collections::HashMap<String, Value>) -
 
 /// Add a job to the install queue, or explain why it clashes with one already there.
 fn enqueue_job(
-    state: &mut TuixState,
+    state: &mut TuiosState,
     registered_apps: &std::collections::HashMap<String, Value>,
     key: &str,
     op: crate::app_store::queue::QueueOp,
@@ -1295,7 +1295,7 @@ fn enqueue_job(
 }
 
 /// Shown whenever the queue blocks something instead of silently swallowing the key.
-fn ui_lock_popup(state: &mut TuixState) {
+fn ui_lock_popup(state: &mut TuiosState) {
     state.popup = Some((
         "UI lock enabled — the install queue is still running. You can keep browsing \
          the App Store, but you cannot leave it or launch apps until the queue finishes."
@@ -1306,7 +1306,7 @@ fn ui_lock_popup(state: &mut TuixState) {
 
 fn handle_appstore_key(
     action: Action,
-    state: &mut TuixState,
+    state: &mut TuiosState,
     registered_apps: &std::collections::HashMap<String, Value>,
     active_installed_app: &mut Option<InstalledDashboard>,
 ) {
@@ -1804,7 +1804,7 @@ fn handle_appstore_key(
 }
 
 fn handle_appstore_action(
-    state: &mut TuixState,
+    state: &mut TuiosState,
     registered_apps: &std::collections::HashMap<String, Value>,
     active_installed_app: &mut Option<InstalledDashboard>,
 ) {
@@ -1844,7 +1844,7 @@ fn handle_appstore_action(
             return;
         }
 
-        logging::info(&format!("App Store: launching {} in embedded TUIX mode", key));
+        logging::info(&format!("App Store: launching {} in embedded tuiOS mode", key));
         *active_installed_app = InstalledDashboard::start(&key, &key, &launch_cmd, 80, 24);
         state.active_app = Some(key.clone());
         state.active_page = None;
@@ -2036,7 +2036,7 @@ fn handle_appstore_action(
 
 /// Returns true when config registries changed and the nav dropdowns were rebuilt.
 fn pump_install_queue(
-    state: &mut TuixState,
+    state: &mut TuiosState,
     registered_apps: &mut std::collections::HashMap<String, Value>,
     dashboards: &mut std::collections::HashMap<String, Value>,
     apps_registry: &mut std::collections::HashMap<String, Value>,
@@ -2082,7 +2082,7 @@ fn pump_install_queue(
 }
 
 fn start_queue_item(
-    state: &mut TuixState,
+    state: &mut TuiosState,
     registered_apps: &mut std::collections::HashMap<String, Value>,
     id: u64,
 ) {
@@ -2159,7 +2159,7 @@ fn start_queue_item(
 /// Apply the result of the job that just finished. Returns true if apps.json /
 /// dashboards.json changed and the nav dropdowns need rebuilding.
 fn finish_queue_item(
-    state: &mut TuixState,
+    state: &mut TuiosState,
     registered_apps: &mut std::collections::HashMap<String, Value>,
 ) -> bool {
     use crate::app_store::queue::{QueueOp, QueueStatus};
@@ -2370,7 +2370,7 @@ fn open_awesome_ratatui_browser(ss: &mut crate::app_store::state::AppStoreState)
 
 fn handle_browser_key(
     action: Action,
-    state: &mut TuixState,
+    state: &mut TuiosState,
     registered_apps: &std::collections::HashMap<String, Value>,
 ) {
     use crate::app_store::awesome_ratatui_manager::{self, BrowserFocus, RowKind};
@@ -2520,7 +2520,7 @@ fn handle_browser_key(
 }
 
 fn handle_browser_action(
-    state: &mut TuixState,
+    state: &mut TuiosState,
     registered_apps: &std::collections::HashMap<String, Value>,
 ) {
     use crate::app_store::awesome_ratatui_manager;
@@ -2639,12 +2639,12 @@ pub fn main() {
     }
 }
 
-/// Run the TUIX app. Returns `true` if the user requested a restart.
+/// Run the tuiOS app. Returns `true` if the user requested a restart.
 fn run_app() -> bool {
     std::fs::create_dir_all("logs").ok();
 
     logging::init();
-    logging::info("TUIX started");
+    logging::info("tuiOS started");
 
     let settings_map = registry::load_settings();
     let mut registered_apps = registry::load_registered_apps();
@@ -2661,7 +2661,7 @@ fn run_app() -> bool {
         .unwrap_or("Dashboard-1")
         .to_string();
 
-    let mut state = TuixState::new(default_dashboard.clone());
+    let mut state = TuiosState::new(default_dashboard.clone());
 
     // Initialize app store: compute install statuses and app list
     state.app_store.install_statuses = app_store::actions::refresh_all_statuses(&registered_apps);
@@ -3216,7 +3216,7 @@ fn run_app() -> bool {
 
         // When an installed dashboard is active and main is focused,
         // forward raw key events directly to the PTY subprocess.
-        // Only Esc (quit) and Tab (switch to navbar) are reserved by TUIX.
+        // Only Esc (quit) and Tab (switch to navbar) are reserved by tuiOS.
         if state.focus == FocusTarget::Main {
             if let Some(dash) = &mut active_installed_dash {
                 if state.active_dashboard == dash.name
@@ -3224,7 +3224,7 @@ fn run_app() -> bool {
                     && state.active_app.is_none()
                 {
                     match key_event.code {
-                        crossterm::event::KeyCode::Esc => break, // Quit TUIX
+                        crossterm::event::KeyCode::Esc => break, // Quit tuiOS
                         crossterm::event::KeyCode::Tab => {
                             state.focus = FocusTarget::Navbar;
                             continue;
@@ -3391,7 +3391,7 @@ fn run_app() -> bool {
         };
 
         if action == Action::Quit {
-            // Don't quit TUIX when in the app store — close the page instead
+            // Don't quit tuiOS when in the app store — close the page instead
             if matches!(state.active_page.as_deref(), Some("appstore")) {
                 if state.app_store.ui_locked() {
                     ui_lock_popup(&mut state);
@@ -3441,7 +3441,7 @@ fn run_app() -> bool {
             }
         }
 
-        // An app was asked to run outside the TUIX container
+        // An app was asked to run outside the tuiOS container
         if let Some(cmd) = state.pending_foreground.take() {
             if app_store::actions::launch_detached(&cmd) {
                 state.popup = Some(("Launched in a new window".to_string(), Instant::now()));

@@ -1,6 +1,6 @@
 /// Dashboard 1 — Clock & Date.
 ///
-/// TUIX dashboard API:
+/// tuiOS dashboard API:
 ///     render(frame, area)  — draw the dashboard inside the given area
 
 use chrono::Local;

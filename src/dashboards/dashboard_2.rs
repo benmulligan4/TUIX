@@ -1,6 +1,6 @@
 /// Dashboard 2 — System Stats (CPU, memory, disk).
 ///
-/// TUIX dashboard API:
+/// tuiOS dashboard API:
 ///     render(frame, area)  — draw the dashboard inside the given area
 
 use ratatui::{

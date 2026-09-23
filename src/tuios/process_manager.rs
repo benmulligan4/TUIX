@@ -1,4 +1,4 @@
-/// TUIX — subprocess app launcher, tracker, and log manager.
+/// tuiOS — subprocess app launcher, tracker, and log manager.
 
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;

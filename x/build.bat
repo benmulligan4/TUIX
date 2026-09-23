@@ -2,7 +2,7 @@
 REM Build locally cloned dashboards and applications (source "local").
 REM Looks for Cargo.toml in downloads\dashboards\{name} and downloads\applications\{name}.
 REM Runs cargo build --release for each.
-REM Logs actions to tuix.log.
+REM Logs actions to tuios.log.
 
 setlocal enabledelayedexpansion
 
@@ -13,12 +13,12 @@ set "DASHBOARDS_JSON=%PROJECT_ROOT%\config\dashboards.json"
 set "APPS_JSON=%PROJECT_ROOT%\config\apps.json"
 set "DASHBOARDS_DIR=%PROJECT_ROOT%\downloads\dashboards"
 set "APPS_DIR=%PROJECT_ROOT%\downloads\applications"
-set "LOG_FILE=%PROJECT_ROOT%\tuix.log"
+set "LOG_FILE=%PROJECT_ROOT%\tuios.log"
 
 for /f "tokens=1-2 delims= " %%a in ('powershell -command "Get-Date -Format 'yyyy-MM-dd HH:mm:ss'"') do set "TIMESTAMP=%%a %%b"
 echo [%TIMESTAMP%] [SCRIPT] build.bat started >> "%LOG_FILE%"
 
-echo === TUIX Build Script (Local) ===
+echo === tuiOS Build Script (Local) ===
 echo.
 
 call :build_from_json "%DASHBOARDS_JSON%" "%DASHBOARDS_DIR%" "Dashboards"

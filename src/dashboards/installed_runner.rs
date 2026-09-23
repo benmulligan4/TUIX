@@ -1,5 +1,5 @@
 /// Installed dashboard runner — spawns third-party TUI apps in a PTY and
-/// renders their output inside the TUIX main container.
+/// renders their output inside the tuiOS main container.
 ///
 /// Uses `portable-pty` to create a pseudo-terminal sized to the container area,
 /// and `vt100` to parse the terminal output into cells we can render with ratatui.
@@ -19,7 +19,7 @@ use ratatui::{
 };
 use vt100::Parser;
 
-use super::super::tuix::models::Action;
+use super::super::tuios::models::Action;
 
 /// Manages a running installed dashboard subprocess.
 pub struct InstalledDashboard {

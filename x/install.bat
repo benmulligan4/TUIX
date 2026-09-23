@@ -1,7 +1,7 @@
 @echo off
 REM Install third-party dashboards and applications with source "global" via cargo install.
 REM Reads config\dashboards.json and config\apps.json for entries with source "global".
-REM Logs actions to tuix.log.
+REM Logs actions to tuios.log.
 
 setlocal enabledelayedexpansion
 
@@ -10,12 +10,12 @@ set "PROJECT_ROOT=%SCRIPT_DIR%.."
 
 set "DASHBOARDS_JSON=%PROJECT_ROOT%\config\dashboards.json"
 set "APPS_JSON=%PROJECT_ROOT%\config\apps.json"
-set "LOG_FILE=%PROJECT_ROOT%\tuix.log"
+set "LOG_FILE=%PROJECT_ROOT%\tuios.log"
 
 for /f "tokens=1-2 delims= " %%a in ('powershell -command "Get-Date -Format 'yyyy-MM-dd HH:mm:ss'"') do set "TIMESTAMP=%%a %%b"
 echo [%TIMESTAMP%] [SCRIPT] install.bat started >> "%LOG_FILE%"
 
-echo === TUIX Install Script (Global) ===
+echo === tuiOS Install Script (Global) ===
 echo.
 
 call :install_from_json "%DASHBOARDS_JSON%" "Dashboards"

@@ -1,4 +1,4 @@
-/// Text Editor — internal TUIX app.
+/// Text Editor — internal tuiOS app.
 ///
 /// A simple text editor that uses the On-Screen Keyboard for input.
 /// Navigate to the text area and press Enter/E to open the keyboard.

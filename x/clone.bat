@@ -2,7 +2,7 @@
 REM Clone third-party dashboards and applications with source "local".
 REM Clones to downloads\dashboards\{name} and downloads\applications\{name}.
 REM Excludes .git and .github directories from cloned repos.
-REM Logs actions to tuix.log.
+REM Logs actions to tuios.log.
 
 setlocal enabledelayedexpansion
 
@@ -13,7 +13,7 @@ set "DASHBOARDS_JSON=%PROJECT_ROOT%\config\dashboards.json"
 set "APPS_JSON=%PROJECT_ROOT%\config\apps.json"
 set "DASHBOARDS_DIR=%PROJECT_ROOT%\downloads\dashboards"
 set "APPS_DIR=%PROJECT_ROOT%\downloads\applications"
-set "LOG_FILE=%PROJECT_ROOT%\tuix.log"
+set "LOG_FILE=%PROJECT_ROOT%\tuios.log"
 
 REM Ensure download directories exist
 if not exist "%DASHBOARDS_DIR%" mkdir "%DASHBOARDS_DIR%"
@@ -23,7 +23,7 @@ REM Log start
 for /f "tokens=1-2 delims= " %%a in ('powershell -command "Get-Date -Format 'yyyy-MM-dd HH:mm:ss'"') do set "TIMESTAMP=%%a %%b"
 echo [%TIMESTAMP%] [SCRIPT] clone.bat started >> "%LOG_FILE%"
 
-echo === TUIX Clone Script ===
+echo === tuiOS Clone Script ===
 echo.
 
 call :clone_from_json "%DASHBOARDS_JSON%" "%DASHBOARDS_DIR%" "Dashboards"

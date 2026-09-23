@@ -9,7 +9,7 @@ use std::thread;
 use serde_json::{json, Value};
 
 use super::state::{InstallLocation, InstallStatus};
-use crate::tuix::registry;
+use crate::tuios::registry;
 use crate::utilities::logging;
 
 // ── Filesystem layout ───────────────────────────────────────────────────
@@ -20,7 +20,7 @@ pub fn project_root() -> PathBuf {
         return PathBuf::from(".");
     }
     if let Ok(exe) = std::env::current_exe() {
-        // target/<profile>/tuix -> walk up looking for the project root
+        // target/<profile>/tuios -> walk up looking for the project root
         let mut dir = exe.parent().map(|p| p.to_path_buf());
         for _ in 0..4 {
             let Some(d) = dir else { break };
@@ -632,7 +632,7 @@ pub fn uninstall_local(
 pub fn locked_uninstall_message(app_key: &str) -> String {
     format!(
         "{} was partly uninstalled — some files are still in use. \
-         Close any running windows of it and restart TUIX to finish removing them.",
+         Close any running windows of it and restart tuiOS to finish removing them.",
         app_key
     )
 }
@@ -981,7 +981,7 @@ pub fn set_window_mode(app_key: &str, mode: &str) {
     logging::info(&format!("App Store: set window mode for {} to {}", app_key, mode));
 }
 
-/// Check if an app supports running embedded in TUIX.
+/// Check if an app supports running embedded in tuiOS.
 pub fn supports_embedded(registered_meta: Option<&serde_json::Value>) -> bool {
     registered_meta
         .and_then(|m| m.get("supports_embedded"))
@@ -989,18 +989,18 @@ pub fn supports_embedded(registered_meta: Option<&serde_json::Value>) -> bool {
         .unwrap_or(true)
 }
 
-// ── Launching outside the TUIX container ────────────────────────────────
+// ── Launching outside the tuiOS container ────────────────────────────────
 
 /// Human-readable label for a stored window mode value.
 pub fn window_mode_label(mode: &str) -> &'static str {
-    if mode == "fullscreen" { "New Window" } else { "TUIX Container" }
+    if mode == "fullscreen" { "New Window" } else { "tuiOS Container" }
 }
 
-/// Whether TUIX should stay running while an app occupies a new window.
-/// When false, TUIX hands over its own terminal so only the app is visible.
-pub fn keep_tuix_open() -> bool {
+/// Whether tuiOS should stay running while an app occupies a new window.
+/// When false, tuiOS hands over its own terminal so only the app is visible.
+pub fn keep_tuios_open() -> bool {
     let settings = crate::settings::persistence::load();
-    crate::settings::persistence::get_bool(&settings, "appearance.new_window_keeps_tuix_open", false)
+    crate::settings::persistence::get_bool(&settings, "appearance.new_window_keeps_tuios_open", false)
 }
 
 fn command_exists(name: &str) -> bool {
@@ -1063,7 +1063,7 @@ fn absolutize(cmd: &[String]) -> Vec<String> {
     out
 }
 
-/// Open `cmd` in a new OS terminal window, detached from TUIX.
+/// Open `cmd` in a new OS terminal window, detached from tuiOS.
 /// Returns false if no new window could be opened.
 pub fn spawn_in_new_window(cmd: &[String]) -> bool {
     if cmd.is_empty() {
@@ -1099,7 +1099,7 @@ pub fn spawn_in_new_window(cmd: &[String]) -> bool {
         // `start` opens a console app in its own window; the quoted first
         // argument is consumed as the window title.
         let mut c = Command::new("cmd");
-        c.arg("/C").arg("start").arg("TUIX App").args(cmd);
+        c.arg("/C").arg("start").arg("tuiOS App").args(cmd);
         return c.spawn().is_ok();
     }
 
@@ -1114,14 +1114,14 @@ pub fn spawn_in_new_window(cmd: &[String]) -> bool {
     c.spawn().is_ok()
 }
 
-/// Decide how to launch an app that is not running in the TUIX container.
+/// Decide how to launch an app that is not running in the tuiOS container.
 ///
-/// Returns true when the app was handed to a separate OS window and TUIX should
+/// Returns true when the app was handed to a separate OS window and tuiOS should
 /// keep running. Returns false when the caller should give up its own terminal
 /// to the app instead — either because the user asked for that, or because no
 /// windowing system is available.
 pub fn launch_detached(cmd: &[String]) -> bool {
-    if !keep_tuix_open() {
+    if !keep_tuios_open() {
         return false;
     }
     if !can_open_new_window() {

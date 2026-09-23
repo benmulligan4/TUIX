@@ -1,21 +1,21 @@
 @echo off
-REM TUIX Setup Script — runs install, clone, and build in order.
+REM tuiOS Setup Script — runs install, clone, and build in order.
 REM 1. install.bat — cargo install for global entries
 REM 2. clone.bat — clone local entries to downloads\
 REM 3. build.bat — cargo build --release for local entries
-REM Logs actions to tuix.log.
+REM Logs actions to tuios.log.
 
 setlocal enabledelayedexpansion
 
 set "SCRIPT_DIR=%~dp0"
 set "PROJECT_ROOT=%SCRIPT_DIR%.."
-set "LOG_FILE=%PROJECT_ROOT%\tuix.log"
+set "LOG_FILE=%PROJECT_ROOT%\tuios.log"
 
 for /f "tokens=1-2 delims= " %%a in ('powershell -command "Get-Date -Format 'yyyy-MM-dd HH:mm:ss'"') do set "TIMESTAMP=%%a %%b"
 echo [%TIMESTAMP%] [SCRIPT] setup.bat started >> "%LOG_FILE%"
 
 echo ========================================
-echo   TUIX Setup
+echo   tuiOS Setup
 echo ========================================
 echo.
 
@@ -38,7 +38,7 @@ call "%SCRIPT_DIR%\build.bat"
 echo.
 
 echo ========================================
-echo   TUIX Setup Complete
+echo   tuiOS Setup Complete
 echo ========================================
 for /f "tokens=1-2 delims= " %%a in ('powershell -command "Get-Date -Format 'yyyy-MM-dd HH:mm:ss'"') do set "TIMESTAMP=%%a %%b"
 echo [%TIMESTAMP%] [SCRIPT] setup.bat completed >> "%LOG_FILE%"

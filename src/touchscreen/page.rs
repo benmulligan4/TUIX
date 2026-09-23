@@ -1,6 +1,6 @@
-/// Touchscreen page — rendered in the TUIX main container.
+/// Touchscreen page — rendered in the tuiOS main container.
 ///
-/// Implements the TUIX page API:
+/// Implements the tuiOS page API:
 ///     render(frame, area)  — draw the page inside the given area
 
 use ratatui::{

@@ -2,7 +2,7 @@
 # Build locally cloned dashboards and applications (source "local").
 # Looks for Cargo.toml in downloads/dashboards/{name} and downloads/applications/{name}.
 # Runs cargo build --release for each.
-# Logs actions to tuix.log.
+# Logs actions to tuios.log.
 
 set -e
 
@@ -13,7 +13,7 @@ DASHBOARDS_JSON="$PROJECT_ROOT/config/dashboards.json"
 APPS_JSON="$PROJECT_ROOT/config/apps.json"
 DASHBOARDS_DIR="$PROJECT_ROOT/downloads/dashboards"
 APPS_DIR="$PROJECT_ROOT/downloads/applications"
-LOG_FILE="$PROJECT_ROOT/tuix.log"
+LOG_FILE="$PROJECT_ROOT/tuios.log"
 
 log_entry() {
     local level="$1"
@@ -81,7 +81,7 @@ for name, meta in data.items():
     done <<< "$entries"
 }
 
-echo "=== TUIX Build Script (Local) ==="
+echo "=== tuiOS Build Script (Local) ==="
 echo ""
 
 build_from_json "$DASHBOARDS_JSON" "$DASHBOARDS_DIR" "Dashboards"

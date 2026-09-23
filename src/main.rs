@@ -1,7 +1,7 @@
-/// TUIX — Terminal UI Experience (Rust/ratatui port)
+/// tuiOS — Terminal UI Experience (Rust/ratatui port)
 /// Entry point — mirrors main.py
 
-mod tuix;
+mod tuios;
 mod settings;
 mod touchscreen;
 mod dashboards;
@@ -10,5 +10,5 @@ mod utilities;
 mod app_store;
 
 fn main() {
-    tuix::app::main();
+    tuios::app::main();
 }
