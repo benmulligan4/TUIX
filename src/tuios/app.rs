@@ -988,6 +988,9 @@ fn handle_main_key(
                     BrowserFocus::DescriptionToggle => {
                         ss.browser.focus = BrowserFocus::List;
                     }
+                    BrowserFocus::CollapseToggle => {
+                        ss.browser.focus = BrowserFocus::List;
+                    }
                     BrowserFocus::RepoButton => {
                         ss.browser.focus = BrowserFocus::List;
                     }
@@ -2404,7 +2407,7 @@ fn handle_browser_key(
                     ss.browser.focus = BrowserFocus::SearchBar;
                 }
                 Action::Down => {
-                    ss.browser.focus = BrowserFocus::DescriptionToggle;
+                    ss.browser.focus = BrowserFocus::CollapseToggle;
                 }
                 Action::Enter => {
                     app_store::actions::open_url(awesome_ratatui_manager::REPO_URL);
@@ -2415,10 +2418,27 @@ fn handle_browser_key(
                 _ => {}
             }
         }
-        BrowserFocus::DescriptionToggle => {
+        BrowserFocus::CollapseToggle => {
             match action {
                 Action::Up => {
                     ss.browser.focus = BrowserFocus::RepoButton;
+                }
+                Action::Down => {
+                    ss.browser.focus = BrowserFocus::DescriptionToggle;
+                }
+                Action::Enter => {
+                    ss.browser.toggle_collapse_all();
+                }
+                Action::Back => {
+                    ss.browser.focus = BrowserFocus::List;
+                }
+                _ => {}
+            }
+        }
+        BrowserFocus::DescriptionToggle => {
+            match action {
+                Action::Up => {
+                    ss.browser.focus = BrowserFocus::CollapseToggle;
                 }
                 Action::Down => {
                     ss.browser.focus = BrowserFocus::List;

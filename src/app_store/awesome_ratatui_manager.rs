@@ -42,6 +42,7 @@ struct Cache {
 pub enum BrowserFocus {
     SearchBar,
     RepoButton,
+    CollapseToggle,
     DescriptionToggle,
     List,
     Actions,
@@ -134,6 +135,25 @@ impl BrowserState {
         let name = app.name.clone();
         let status = super::actions::probe_install_status(&key, &name);
         self.probe_cache.insert(key, status);
+    }
+
+    /// True once every category is collapsed, which flips the button to "expand all".
+    pub fn all_collapsed(&self) -> bool {
+        !self.categories.is_empty()
+            && self.categories.iter().all(|c| self.collapsed.contains(c))
+    }
+
+    pub fn toggle_collapse_all(&mut self) {
+        if self.all_collapsed() {
+            self.collapsed.clear();
+        } else {
+            for cat in &self.categories {
+                self.collapsed.insert(cat.clone());
+            }
+        }
+        self.cursor = 0;
+        self.scroll = 0;
+        self.recompute_visible();
     }
 
     pub fn recompute_visible(&mut self) {

@@ -133,6 +133,19 @@ fn render_app_list(
         repo_style,
     )));
 
+    // Collapse / expand all categories
+    let collapse_style = if browser.focus == BrowserFocus::CollapseToggle {
+        Style::default().fg(Color::Black).bg(Color::Cyan)
+    } else {
+        Style::default().fg(Color::White)
+    };
+    let collapse_text = if browser.all_collapsed() {
+        " [▶] Expand All Categories"
+    } else {
+        " [▼] Collapse All Categories"
+    };
+    lines.push(Line::from(Span::styled(collapse_text, collapse_style)));
+
     // Show descriptions toggle
     let toggle_style = if browser.focus == BrowserFocus::DescriptionToggle {
         Style::default().fg(Color::Black).bg(Color::Cyan)
