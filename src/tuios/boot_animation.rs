@@ -23,8 +23,10 @@ const SPLASH_STEPS: i32 = 12;
 
 /// Widest the centred text block under the logo is allowed to get.
 const CONTENT_MAX_W: u16 = 84;
-/// Detail is capped at one cell per pixel, so the logo takes all the room it can get.
+/// Detail is capped at one cell per pixel, so the logo takes most of the width it can get.
 const SPLASH_MAX_W: u16 = 200;
+/// Percentage of the screen width the logo is allowed to span.
+const SPLASH_WIDTH_PCT: u32 = 80;
 /// Below this the logo turns to mush, so the text wordmark is used instead.
 const SPLASH_MIN_W: u16 = 40;
 const SPLASH_MIN_ROWS: u16 = 3;
@@ -99,7 +101,7 @@ fn splash(width: u16, height: u16) -> Option<Splash> {
     let logo = trim_padding(image::load_from_memory_with_format(LOGO_PNG, ImageFormat::Png).ok()?);
     let (px_w, px_h) = (logo.width().max(1), logo.height().max(1));
 
-    let room_w = width.saturating_sub(4).min(SPLASH_MAX_W) as u32;
+    let room_w = (width as u32 * SPLASH_WIDTH_PCT / 100).min(SPLASH_MAX_W as u32);
     let room_h = height.saturating_sub(TEXT_ROWS + 2) as u32;
     let cells_w = room_w.min(room_h * CELL_ASPECT * px_w / px_h) as u16;
     let cells_h = (cells_w as u32 * px_h / (px_w * CELL_ASPECT)).max(1) as u16;
