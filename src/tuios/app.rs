@@ -2483,6 +2483,15 @@ fn handle_browser_key(
                                 }
                                 ss.browser.recompute_visible();
                             }
+                            RowKind::SubcategoryHeader { ref category, ref subcategory } => {
+                                let key = awesome_ratatui_manager::subcategory_key(category, subcategory);
+                                if ss.browser.collapsed.contains(&key) {
+                                    ss.browser.collapsed.remove(&key);
+                                } else {
+                                    ss.browser.collapsed.insert(key);
+                                }
+                                ss.browser.recompute_visible();
+                            }
                             RowKind::App(_) => {
                                 ss.browser.probe_selected();
                                 ss.browser.focus = BrowserFocus::Actions;
