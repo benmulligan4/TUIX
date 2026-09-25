@@ -1,10 +1,8 @@
-/// Boot intro animation — retro CRT-style "tuiOS" wordmark with a loading bar.
-/// Shown on startup unless disabled in Settings → Appearance.
+/// Retro intro — CRT-style "tuiOS" block wordmark with a loading bar.
 
 use std::io;
 use std::time::{Duration, Instant};
 
-use crossterm::event::{self, Event, KeyEventKind};
 use ratatui::{
     backend::Backend,
     layout::Rect,
@@ -14,39 +12,48 @@ use ratatui::{
     Frame, Terminal,
 };
 
-const GLYPH_ROWS: usize = 7;
-const GLYPH_COLS: usize = 5;
+use super::{bar_spans, center, eased, skip_requested, DURATION_MS, HOLD_MS, STAGES};
+
+const MARK_ROWS: usize = 9;
+const SMALL_ROWS: usize = 5;
+const BIG_ROWS: usize = 7;
+const BIG_COLS: usize = 5;
 const LETTER_GAP: usize = 1;
 
-/// 7-row pixel grids for "tuiOS", one entry per letter. `#` is an on pixel.
-const GLYPHS: &[[&str; GLYPH_ROWS]] = &[
+/// Solid badge holding the knocked-out "tui".
+const BADGE_W: usize = 23;
+const BADGE_PAD_RIGHT: usize = 2;
+const BADGE_GAP: usize = 2;
+/// Row the small letters start on, so their baseline matches "OS".
+const SMALL_TOP: usize = 3;
+/// Row "OS" starts on, leaving a one-row margin against the badge edges.
+const BIG_TOP: usize = 1;
+
+const SMALL_TUI: &[[&str; SMALL_ROWS]] = &[
     [
-        "..#..",
-        "..#..",
-        "#####",
-        "..#..",
-        "..#..",
-        "..#..",
-        "..###",
+        ".#.",
+        "###",
+        ".#.",
+        ".#.",
+        ".##",
     ],
     [
-        ".....",
-        ".....",
-        "#...#",
-        "#...#",
-        "#...#",
-        "#...#",
-        ".####",
+        "...",
+        "#.#",
+        "#.#",
+        "#.#",
+        ".##",
     ],
     [
-        "..#..",
-        ".....",
-        "..#..",
-        "..#..",
-        "..#..",
-        "..#..",
-        "..#..",
+        "#",
+        ".",
+        "#",
+        "#",
+        "#",
     ],
+];
+
+const BIG_OS: &[[&str; BIG_ROWS]] = &[
     [
         ".###.",
         "#...#",
@@ -67,20 +74,8 @@ const GLYPHS: &[[&str; GLYPH_ROWS]] = &[
     ],
 ];
 
-/// Partial-block characters for sub-cell progress bar resolution.
-const PARTIALS: [char; 7] = ['▏', '▎', '▍', '▌', '▋', '▊', '▉'];
-
-const STAGES: &[&str] = &[
-    "INITIALISING KERNEL",
-    "MOUNTING CONFIGURATION",
-    "LOADING DASHBOARDS",
-    "REGISTERING APPLICATIONS",
-    "STARTING SHELL",
-];
-
-const DURATION_MS: u64 = 2600;
-const FRAME_MS: u64 = 33;
-const HOLD_MS: u64 = 600;
+const SMALL_W: usize = 3 + LETTER_GAP + 3 + LETTER_GAP + 1;
+const MARK_COLS: usize = BADGE_W + BADGE_GAP + BIG_COLS * 2 + LETTER_GAP;
 
 /// Play the intro animation. Returns early if the user presses a key.
 pub fn play<B: Backend>(terminal: &mut Terminal<B>, accent: Color) -> io::Result<()> {
@@ -119,45 +114,73 @@ pub fn play<B: Backend>(terminal: &mut Terminal<B>, accent: Color) -> io::Result
     Ok(())
 }
 
-fn skip_requested() -> io::Result<bool> {
-    if event::poll(Duration::from_millis(FRAME_MS))? {
-        if let Event::Key(key) = event::read()? {
-            return Ok(key.kind == KeyEventKind::Press);
+#[derive(Clone, Copy, PartialEq)]
+enum Cell {
+    Empty,
+    White,
+    Black,
+}
+
+/// Build the wordmark grid: "tui" in black on a solid white badge, "OS" in white beside it.
+fn wordmark() -> [[Cell; MARK_COLS]; MARK_ROWS] {
+    let mut grid = [[Cell::Empty; MARK_COLS]; MARK_ROWS];
+
+    for row in grid.iter_mut() {
+        for cell in row[..BADGE_W].iter_mut() {
+            *cell = Cell::White;
         }
     }
-    Ok(false)
-}
 
-/// Nudge the linear ratio so the bar stutters between stages like a real boot.
-fn eased(t: f64) -> f64 {
-    let t = t.clamp(0.0, 1.0);
-    let wobble = (t * STAGES.len() as f64 * std::f64::consts::PI).sin() * 0.035;
-    (t + wobble).clamp(0.0, 1.0)
-}
-
-/// Build the wordmark rows, where each grid pixel becomes `scale` cells wide.
-fn wordmark(scale: usize) -> Vec<String> {
-    (0..GLYPH_ROWS)
-        .map(|row| {
-            let mut line = String::new();
-            for (i, glyph) in GLYPHS.iter().enumerate() {
-                if i > 0 {
-                    line.push_str(&" ".repeat(LETTER_GAP * scale));
-                }
-                for px in glyph[row].chars() {
-                    let cell = if px == '#' { '█' } else { ' ' };
-                    for _ in 0..scale {
-                        line.push(cell);
-                    }
+    let mut x = BADGE_W - BADGE_PAD_RIGHT - SMALL_W;
+    for glyph in SMALL_TUI {
+        for (r, line) in glyph.iter().enumerate() {
+            for (c, px) in line.chars().enumerate() {
+                if px == '#' {
+                    grid[SMALL_TOP + r][x + c] = Cell::Black;
                 }
             }
-            line
-        })
-        .collect()
+        }
+        x += glyph[0].len() + LETTER_GAP;
+    }
+
+    let mut x = BADGE_W + BADGE_GAP;
+    for glyph in BIG_OS {
+        for (r, line) in glyph.iter().enumerate() {
+            for (c, px) in line.chars().enumerate() {
+                if px == '#' {
+                    grid[BIG_TOP + r][x + c] = Cell::White;
+                }
+            }
+        }
+        x += BIG_COLS + LETTER_GAP;
+    }
+
+    grid
+}
+
+/// Coloured spaces rather than block glyphs, so rows join without seams.
+fn mark_line(row: &[Cell; MARK_COLS], scale: usize) -> Line<'static> {
+    let mut spans: Vec<Span> = Vec::new();
+    let mut i = 0;
+    while i < row.len() {
+        let cell = row[i];
+        let mut j = i;
+        while j < row.len() && row[j] == cell {
+            j += 1;
+        }
+        let style = match cell {
+            Cell::Empty => Style::default(),
+            Cell::White => Style::default().bg(Color::White),
+            Cell::Black => Style::default().bg(Color::Black),
+        };
+        spans.push(Span::styled(" ".repeat((j - i) * scale), style));
+        i = j;
+    }
+    Line::from(spans)
 }
 
 fn wordmark_width(scale: usize) -> u16 {
-    ((GLYPH_COLS * GLYPHS.len() + LETTER_GAP * (GLYPHS.len() - 1)) * scale) as u16
+    (MARK_COLS * scale) as u16
 }
 
 fn render(frame: &mut Frame, progress: f64, tick: u64, accent: Color, ready: bool) {
@@ -170,7 +193,7 @@ fn render(frame: &mut Frame, progress: f64, tick: u64, accent: Color, ready: boo
     // Pick the largest wordmark scale that fits, else fall back to plain text
     let scale = if area.width >= wordmark_width(2) + 4 { 2 } else { 1 };
     let mark_w = wordmark_width(scale);
-    let use_mark = area.width >= mark_w + 2 && area.height >= 14;
+    let use_mark = area.width >= mark_w + 2 && area.height >= 16;
     let content_w = if use_mark {
         mark_w
     } else {
@@ -180,24 +203,32 @@ fn render(frame: &mut Frame, progress: f64, tick: u64, accent: Color, ready: boo
     let mut lines: Vec<Line> = Vec::new();
 
     if use_mark {
-        for row in wordmark(scale) {
-            lines.push(Line::from(Span::styled(row, Style::default().fg(accent))));
+        for row in wordmark().iter() {
+            lines.push(mark_line(row, scale));
         }
     } else {
-        lines.push(Line::from(center(
+        let pad = (content_w as usize).saturating_sub(7) / 2;
+        lines.push(Line::from(vec![
+            Span::raw(" ".repeat(pad)),
             Span::styled(
-                "tuiOS",
-                Style::default().fg(accent).add_modifier(Modifier::BOLD),
+                " tui ",
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::White)
+                    .add_modifier(Modifier::BOLD),
             ),
-            content_w,
-        )));
+            Span::styled(
+                "OS",
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]));
     }
 
     lines.push(Line::default());
 
-    let subtitle = if content_w >= 45 {
-        "Created by Ben Mulligan"
-    } else if content_w >= 24 {
+    let subtitle = if content_w >= 24 {
         "Created by Ben Mulligan"
     } else {
         "Ben Mulligan"
@@ -246,31 +277,4 @@ fn render(frame: &mut Frame, progress: f64, tick: u64, accent: Color, ready: boo
     };
 
     frame.render_widget(Paragraph::new(lines), rect);
-}
-
-fn center(span: Span<'_>, width: u16) -> Vec<Span<'_>> {
-    let pad = (width as usize).saturating_sub(span.content.chars().count()) / 2;
-    vec![Span::raw(" ".repeat(pad)), span]
-}
-
-fn bar_spans(width: usize, ratio: f64, accent: Color, trough: Color) -> Vec<Span<'static>> {
-    let eighths = (width as f64 * 8.0 * ratio).round() as usize;
-    let full = eighths / 8;
-    let remainder = eighths % 8;
-
-    let mut filled = "█".repeat(full.min(width));
-    let mut used = full.min(width);
-    if remainder > 0 && used < width {
-        filled.push(PARTIALS[remainder - 1]);
-        used += 1;
-    }
-
-    let mut spans = vec![Span::styled(filled, Style::default().fg(accent))];
-    if used < width {
-        spans.push(Span::styled(
-            "░".repeat(width - used),
-            Style::default().fg(trough),
-        ));
-    }
-    spans
 }

@@ -2734,7 +2734,8 @@ fn run_app() -> bool {
             let accent = settings::pages::appearance::color_from_name(
                 &settings::persistence::get_str(&s, "appearance.accent_color", "Cyan"),
             );
-            let _ = boot_animation::play(&mut terminal, accent);
+            let style = settings::persistence::get_str(&s, "appearance.boot_animation_style", "Modern");
+            let _ = boot_animation::play(&mut terminal, accent, &style);
         }
     }
 
