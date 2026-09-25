@@ -1,10 +1,11 @@
-/// Boot intro animation — retro CRT-style "tuiOS" wordmark with a loading bar.
+/// Boot intro animation — the tuiOS logo splash screen with a loading bar.
 /// Shown on startup unless disabled in Settings → Appearance.
 
-use std::io;
+use std::io::{self, Cursor};
 use std::time::{Duration, Instant};
 
 use crossterm::event::{self, Event, KeyEventKind};
+use image::{imageops::FilterType, ImageFormat};
 use ratatui::{
     backend::Backend,
     layout::Rect,
@@ -13,69 +14,22 @@ use ratatui::{
     widgets::Paragraph,
     Frame, Terminal,
 };
+use ratatui_splash_screen::{SplashConfig, SplashScreen};
 
-const MARK_ROWS: usize = 9;
-const SMALL_ROWS: usize = 5;
-const BIG_ROWS: usize = 7;
-const BIG_COLS: usize = 5;
-const LETTER_GAP: usize = 1;
+const LOGO_PNG: &[u8] = include_bytes!("tuios_logo.png");
 
-/// Solid badge holding the knocked-out "tui".
-const BADGE_W: usize = 18;
-const BADGE_PAD_RIGHT: usize = 2;
-const BADGE_GAP: usize = 2;
-/// Row the small letters start on, so their baseline matches "OS".
-const SMALL_TOP: usize = 3;
-/// Row "OS" starts on, leaving a one-row margin against the badge edges.
-const BIG_TOP: usize = 1;
+/// Frames the splash takes to resolve from blurred/dark to the full logo.
+const SPLASH_STEPS: i32 = 12;
 
-const SMALL_TUI: &[[&str; SMALL_ROWS]] = &[
-    [
-        ".#.",
-        "###",
-        ".#.",
-        ".#.",
-        ".##",
-    ],
-    [
-        "...",
-        "#.#",
-        "#.#",
-        "#.#",
-        ".##",
-    ],
-    [
-        "#",
-        ".",
-        "#",
-        "#",
-        "#",
-    ],
-];
-
-const BIG_OS: &[[&str; BIG_ROWS]] = &[
-    [
-        ".###.",
-        "#...#",
-        "#...#",
-        "#...#",
-        "#...#",
-        "#...#",
-        ".###.",
-    ],
-    [
-        ".####",
-        "#....",
-        "#....",
-        ".###.",
-        "....#",
-        "....#",
-        "####.",
-    ],
-];
-
-const SMALL_W: usize = 3 + LETTER_GAP + 3 + LETTER_GAP + 1;
-const MARK_COLS: usize = BADGE_W + BADGE_GAP + BIG_COLS * 2 + LETTER_GAP;
+/// Widest the centred content block is allowed to get.
+const CONTENT_MAX_W: u16 = 84;
+/// Below this the logo turns to mush, so the text wordmark is used instead.
+const CONTENT_MIN_SPLASH_W: u16 = 24;
+/// Logo aspect (~3:1) halved again because terminal cells are twice as tall as wide.
+const SPLASH_CELL_ASPECT: u16 = 6;
+const SPLASH_MIN_ROWS: u16 = 3;
+/// Subtitle, spacers, bar and status line rendered under the logo.
+const TEXT_ROWS: u16 = 7;
 
 /// Partial-block characters for sub-cell progress bar resolution.
 const PARTIALS: [char; 7] = ['▏', '▎', '▍', '▌', '▋', '▊', '▉'];
@@ -92,10 +46,50 @@ const DURATION_MS: u64 = 2600;
 const FRAME_MS: u64 = 33;
 const HOLD_MS: u64 = 600;
 
+/// Resample the logo so one source pixel lands on exactly one braille dot.
+///
+/// The widget colours a whole cell from the last dot drawn in it, so the logo is
+/// first averaged down to one pixel per cell and then blown back up to the dot
+/// grid — every dot in a cell then shares a colour instead of fighting for it.
+fn splash_image_data(cells_w: u16, cells_h: u16) -> Option<Vec<u8>> {
+    let logo = image::load_from_memory_with_format(LOGO_PNG, ImageFormat::Png).ok()?;
+    let mut data = Vec::new();
+    logo.resize_exact(cells_w as u32, cells_h as u32, FilterType::Triangle)
+        .resize_exact(cells_w as u32 * 2, cells_h as u32 * 4, FilterType::Nearest)
+        .write_to(&mut Cursor::new(&mut data), ImageFormat::Png)
+        .ok()?;
+    Some(data)
+}
+
+fn splash_screen(cells_w: u16, cells_h: u16) -> Option<SplashScreen> {
+    if cells_w < CONTENT_MIN_SPLASH_W || cells_h < SPLASH_MIN_ROWS {
+        return None;
+    }
+    let data = splash_image_data(cells_w, cells_h)?;
+    SplashScreen::new(SplashConfig {
+        image_data: &data,
+        sha256sum: None,
+        render_steps: SPLASH_STEPS,
+        use_colors: true,
+    })
+    .ok()
+}
+
+/// Width of the centred content block and height of the logo above it, in cells.
+fn dims(width: u16, height: u16) -> (u16, u16) {
+    let content_w = width.saturating_sub(4).clamp(12, CONTENT_MAX_W);
+    let logo_h = (content_w / SPLASH_CELL_ASPECT).min(height.saturating_sub(TEXT_ROWS));
+    (content_w, logo_h)
+}
+
 /// Play the intro animation. Returns early if the user presses a key.
 pub fn play<B: Backend>(terminal: &mut Terminal<B>, accent: Color) -> io::Result<()> {
     let start = Instant::now();
     let total = Duration::from_millis(DURATION_MS);
+
+    let size = terminal.size()?;
+    let (content_w, logo_h) = dims(size.width, size.height);
+    let mut splash = splash_screen(content_w, logo_h);
 
     loop {
         let elapsed = start.elapsed();
@@ -105,7 +99,7 @@ pub fn play<B: Backend>(terminal: &mut Terminal<B>, accent: Color) -> io::Result
         let tick = elapsed.as_millis() as u64;
         let progress = eased(tick as f64 / DURATION_MS as f64);
 
-        terminal.draw(|frame| render(frame, progress, tick, accent, false))?;
+        terminal.draw(|frame| render(frame, splash.as_mut(), progress, tick, accent, false))?;
 
         if skip_requested()? {
             return Ok(());
@@ -120,7 +114,7 @@ pub fn play<B: Backend>(terminal: &mut Terminal<B>, accent: Color) -> io::Result
             break;
         }
         let tick = DURATION_MS + elapsed.as_millis() as u64;
-        terminal.draw(|frame| render(frame, 1.0, tick, accent, true))?;
+        terminal.draw(|frame| render(frame, splash.as_mut(), 1.0, tick, accent, true))?;
         if skip_requested()? {
             break;
         }
@@ -145,99 +139,27 @@ fn eased(t: f64) -> f64 {
     (t + wobble).clamp(0.0, 1.0)
 }
 
-#[derive(Clone, Copy, PartialEq)]
-enum Cell {
-    Empty,
-    White,
-    Black,
-}
-
-/// Build the wordmark grid: "tui" in black on a solid white badge, "OS" in white beside it.
-fn wordmark() -> [[Cell; MARK_COLS]; MARK_ROWS] {
-    let mut grid = [[Cell::Empty; MARK_COLS]; MARK_ROWS];
-
-    for row in grid.iter_mut() {
-        for cell in row[..BADGE_W].iter_mut() {
-            *cell = Cell::White;
-        }
-    }
-
-    let mut x = BADGE_W - BADGE_PAD_RIGHT - SMALL_W;
-    for glyph in SMALL_TUI {
-        for (r, line) in glyph.iter().enumerate() {
-            for (c, px) in line.chars().enumerate() {
-                if px == '#' {
-                    grid[SMALL_TOP + r][x + c] = Cell::Black;
-                }
-            }
-        }
-        x += glyph[0].len() + LETTER_GAP;
-    }
-
-    let mut x = BADGE_W + BADGE_GAP;
-    for glyph in BIG_OS {
-        for (r, line) in glyph.iter().enumerate() {
-            for (c, px) in line.chars().enumerate() {
-                if px == '#' {
-                    grid[BIG_TOP + r][x + c] = Cell::White;
-                }
-            }
-        }
-        x += BIG_COLS + LETTER_GAP;
-    }
-
-    grid
-}
-
-/// Coloured spaces rather than block glyphs, so rows join without seams.
-fn mark_line(row: &[Cell; MARK_COLS], scale: usize) -> Line<'static> {
-    let mut spans: Vec<Span> = Vec::new();
-    let mut i = 0;
-    while i < row.len() {
-        let cell = row[i];
-        let mut j = i;
-        while j < row.len() && row[j] == cell {
-            j += 1;
-        }
-        let style = match cell {
-            Cell::Empty => Style::default(),
-            Cell::White => Style::default().bg(Color::White),
-            Cell::Black => Style::default().bg(Color::Black),
-        };
-        spans.push(Span::styled(" ".repeat((j - i) * scale), style));
-        i = j;
-    }
-    Line::from(spans)
-}
-
-fn wordmark_width(scale: usize) -> u16 {
-    (MARK_COLS * scale) as u16
-}
-
-fn render(frame: &mut Frame, progress: f64, tick: u64, accent: Color, ready: bool) {
+fn render(
+    frame: &mut Frame,
+    splash: Option<&mut SplashScreen>,
+    progress: f64,
+    tick: u64,
+    accent: Color,
+    ready: bool,
+) {
     let area = frame.area();
     let progress = progress.clamp(0.0, 1.0);
 
     let dim = Color::Rgb(70, 70, 70);
     let text = Color::Rgb(170, 170, 170);
 
-    // Pick the largest wordmark scale that fits, else fall back to plain text
-    let scale = if area.width >= wordmark_width(2) + 4 { 2 } else { 1 };
-    let mark_w = wordmark_width(scale);
-    let use_mark = area.width >= mark_w + 2 && area.height >= 16;
-    let content_w = if use_mark {
-        mark_w
-    } else {
-        area.width.saturating_sub(4).clamp(12, 40)
-    };
+    let (content_w, splash_h) = dims(area.width, area.height);
+    let splash = splash.filter(|_| splash_h >= SPLASH_MIN_ROWS && content_w >= CONTENT_MIN_SPLASH_W);
+    let logo_h = if splash.is_some() { splash_h } else { 1 };
 
     let mut lines: Vec<Line> = Vec::new();
 
-    if use_mark {
-        for row in wordmark().iter() {
-            lines.push(mark_line(row, scale));
-        }
-    } else {
+    if splash.is_none() {
         let pad = (content_w as usize).saturating_sub(7) / 2;
         lines.push(Line::from(vec![
             Span::raw(" ".repeat(pad)),
@@ -259,9 +181,7 @@ fn render(frame: &mut Frame, progress: f64, tick: u64, accent: Color, ready: boo
 
     lines.push(Line::default());
 
-    let subtitle = if content_w >= 45 {
-        "Created by Ben Mulligan"
-    } else if content_w >= 24 {
+    let subtitle = if content_w >= CONTENT_MIN_SPLASH_W {
         "Created by Ben Mulligan"
     } else {
         "Ben Mulligan"
@@ -301,7 +221,7 @@ fn render(frame: &mut Frame, progress: f64, tick: u64, accent: Color, ready: boo
         Span::styled(percent, Style::default().fg(accent)),
     ]));
 
-    let content_h = lines.len() as u16;
+    let content_h = logo_h + lines.len() as u16;
     let rect = Rect {
         x: area.x + area.width.saturating_sub(content_w) / 2,
         y: area.y + area.height.saturating_sub(content_h) / 2,
@@ -309,7 +229,20 @@ fn render(frame: &mut Frame, progress: f64, tick: u64, accent: Color, ready: boo
         height: content_h.min(area.height),
     };
 
-    frame.render_widget(Paragraph::new(lines), rect);
+    if let Some(splash) = splash {
+        let logo_rect = Rect {
+            height: logo_h.min(rect.height),
+            ..rect
+        };
+        frame.render_widget(splash, logo_rect);
+    }
+
+    let text_rect = Rect {
+        y: rect.y + logo_h,
+        height: rect.height.saturating_sub(logo_h),
+        ..rect
+    };
+    frame.render_widget(Paragraph::new(lines), text_rect);
 }
 
 fn center(span: Span<'_>, width: u16) -> Vec<Span<'_>> {
