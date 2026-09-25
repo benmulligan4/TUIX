@@ -21,7 +21,7 @@ const BIG_COLS: usize = 5;
 const LETTER_GAP: usize = 1;
 
 /// Solid badge holding the knocked-out "tui".
-const BADGE_W: usize = 18;
+const BADGE_W: usize = 23;
 const BADGE_PAD_RIGHT: usize = 2;
 const BADGE_GAP: usize = 2;
 /// Row the small letters start on, so their baseline matches "OS".
