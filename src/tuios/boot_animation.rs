@@ -14,39 +14,46 @@ use ratatui::{
     Frame, Terminal,
 };
 
-const GLYPH_ROWS: usize = 7;
-const GLYPH_COLS: usize = 5;
+const MARK_ROWS: usize = 9;
+const SMALL_ROWS: usize = 5;
+const BIG_ROWS: usize = 7;
+const BIG_COLS: usize = 5;
 const LETTER_GAP: usize = 1;
 
-/// 7-row pixel grids for "tuiOS", one entry per letter. `#` is an on pixel.
-const GLYPHS: &[[&str; GLYPH_ROWS]] = &[
+/// Solid badge holding the knocked-out "tui".
+const BADGE_W: usize = 18;
+const BADGE_PAD_RIGHT: usize = 2;
+const BADGE_GAP: usize = 2;
+/// Row the small letters start on, so their baseline matches "OS".
+const SMALL_TOP: usize = 3;
+/// Row "OS" starts on, leaving a one-row margin against the badge edges.
+const BIG_TOP: usize = 1;
+
+const SMALL_TUI: &[[&str; SMALL_ROWS]] = &[
     [
-        "..#..",
-        "..#..",
-        "#####",
-        "..#..",
-        "..#..",
-        "..#..",
-        "..###",
+        ".#.",
+        "###",
+        ".#.",
+        ".#.",
+        ".##",
     ],
     [
-        ".....",
-        ".....",
-        "#...#",
-        "#...#",
-        "#...#",
-        "#...#",
-        ".####",
+        "...",
+        "#.#",
+        "#.#",
+        "#.#",
+        ".##",
     ],
     [
-        "..#..",
-        ".....",
-        "..#..",
-        "..#..",
-        "..#..",
-        "..#..",
-        "..#..",
+        "#",
+        ".",
+        "#",
+        "#",
+        "#",
     ],
+];
+
+const BIG_OS: &[[&str; BIG_ROWS]] = &[
     [
         ".###.",
         "#...#",
@@ -66,6 +73,9 @@ const GLYPHS: &[[&str; GLYPH_ROWS]] = &[
         "####.",
     ],
 ];
+
+const SMALL_W: usize = 3 + LETTER_GAP + 3 + LETTER_GAP + 1;
+const MARK_COLS: usize = BADGE_W + BADGE_GAP + BIG_COLS * 2 + LETTER_GAP;
 
 /// Partial-block characters for sub-cell progress bar resolution.
 const PARTIALS: [char; 7] = ['▏', '▎', '▍', '▌', '▋', '▊', '▉'];
@@ -136,19 +146,48 @@ fn eased(t: f64) -> f64 {
 }
 
 /// Build the wordmark rows, where each grid pixel becomes `scale` cells wide.
+/// "tui" is knocked out of a solid badge, "OS" sits beside it in the badge colour.
 fn wordmark(scale: usize) -> Vec<String> {
-    (0..GLYPH_ROWS)
+    let mut grid = [[false; MARK_COLS]; MARK_ROWS];
+
+    for row in grid.iter_mut() {
+        for cell in row[..BADGE_W].iter_mut() {
+            *cell = true;
+        }
+    }
+
+    let mut x = BADGE_W - BADGE_PAD_RIGHT - SMALL_W;
+    for glyph in SMALL_TUI {
+        for (r, line) in glyph.iter().enumerate() {
+            for (c, px) in line.chars().enumerate() {
+                if px == '#' {
+                    grid[SMALL_TOP + r][x + c] = false;
+                }
+            }
+        }
+        x += glyph[0].len() + LETTER_GAP;
+    }
+
+    let mut x = BADGE_W + BADGE_GAP;
+    for glyph in BIG_OS {
+        for (r, line) in glyph.iter().enumerate() {
+            for (c, px) in line.chars().enumerate() {
+                if px == '#' {
+                    grid[BIG_TOP + r][x + c] = true;
+                }
+            }
+        }
+        x += BIG_COLS + LETTER_GAP;
+    }
+
+    grid
+        .iter()
         .map(|row| {
             let mut line = String::new();
-            for (i, glyph) in GLYPHS.iter().enumerate() {
-                if i > 0 {
-                    line.push_str(&" ".repeat(LETTER_GAP * scale));
-                }
-                for px in glyph[row].chars() {
-                    let cell = if px == '#' { '█' } else { ' ' };
-                    for _ in 0..scale {
-                        line.push(cell);
-                    }
+            for &on in row.iter() {
+                let cell = if on { '█' } else { ' ' };
+                for _ in 0..scale {
+                    line.push(cell);
                 }
             }
             line
@@ -157,7 +196,7 @@ fn wordmark(scale: usize) -> Vec<String> {
 }
 
 fn wordmark_width(scale: usize) -> u16 {
-    ((GLYPH_COLS * GLYPHS.len() + LETTER_GAP * (GLYPHS.len() - 1)) * scale) as u16
+    (MARK_COLS * scale) as u16
 }
 
 fn render(frame: &mut Frame, progress: f64, tick: u64, accent: Color, ready: bool) {
@@ -170,7 +209,7 @@ fn render(frame: &mut Frame, progress: f64, tick: u64, accent: Color, ready: boo
     // Pick the largest wordmark scale that fits, else fall back to plain text
     let scale = if area.width >= wordmark_width(2) + 4 { 2 } else { 1 };
     let mark_w = wordmark_width(scale);
-    let use_mark = area.width >= mark_w + 2 && area.height >= 14;
+    let use_mark = area.width >= mark_w + 2 && area.height >= 16;
     let content_w = if use_mark {
         mark_w
     } else {
