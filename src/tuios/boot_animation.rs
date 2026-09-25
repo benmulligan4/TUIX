@@ -145,14 +145,20 @@ fn eased(t: f64) -> f64 {
     (t + wobble).clamp(0.0, 1.0)
 }
 
-/// Build the wordmark rows, where each grid pixel becomes `scale` cells wide.
-/// "tui" is knocked out of a solid badge, "OS" sits beside it in the badge colour.
-fn wordmark(scale: usize) -> Vec<String> {
-    let mut grid = [[false; MARK_COLS]; MARK_ROWS];
+#[derive(Clone, Copy, PartialEq)]
+enum Cell {
+    Empty,
+    White,
+    Black,
+}
+
+/// Build the wordmark grid: "tui" in black on a solid white badge, "OS" in white beside it.
+fn wordmark() -> [[Cell; MARK_COLS]; MARK_ROWS] {
+    let mut grid = [[Cell::Empty; MARK_COLS]; MARK_ROWS];
 
     for row in grid.iter_mut() {
         for cell in row[..BADGE_W].iter_mut() {
-            *cell = true;
+            *cell = Cell::White;
         }
     }
 
@@ -161,7 +167,7 @@ fn wordmark(scale: usize) -> Vec<String> {
         for (r, line) in glyph.iter().enumerate() {
             for (c, px) in line.chars().enumerate() {
                 if px == '#' {
-                    grid[SMALL_TOP + r][x + c] = false;
+                    grid[SMALL_TOP + r][x + c] = Cell::Black;
                 }
             }
         }
@@ -173,7 +179,7 @@ fn wordmark(scale: usize) -> Vec<String> {
         for (r, line) in glyph.iter().enumerate() {
             for (c, px) in line.chars().enumerate() {
                 if px == '#' {
-                    grid[BIG_TOP + r][x + c] = true;
+                    grid[BIG_TOP + r][x + c] = Cell::White;
                 }
             }
         }
@@ -181,18 +187,27 @@ fn wordmark(scale: usize) -> Vec<String> {
     }
 
     grid
-        .iter()
-        .map(|row| {
-            let mut line = String::new();
-            for &on in row.iter() {
-                let cell = if on { '█' } else { ' ' };
-                for _ in 0..scale {
-                    line.push(cell);
-                }
-            }
-            line
-        })
-        .collect()
+}
+
+/// Coloured spaces rather than block glyphs, so rows join without seams.
+fn mark_line(row: &[Cell; MARK_COLS], scale: usize) -> Line<'static> {
+    let mut spans: Vec<Span> = Vec::new();
+    let mut i = 0;
+    while i < row.len() {
+        let cell = row[i];
+        let mut j = i;
+        while j < row.len() && row[j] == cell {
+            j += 1;
+        }
+        let style = match cell {
+            Cell::Empty => Style::default(),
+            Cell::White => Style::default().bg(Color::White),
+            Cell::Black => Style::default().bg(Color::Black),
+        };
+        spans.push(Span::styled(" ".repeat((j - i) * scale), style));
+        i = j;
+    }
+    Line::from(spans)
 }
 
 fn wordmark_width(scale: usize) -> u16 {
@@ -219,17 +234,27 @@ fn render(frame: &mut Frame, progress: f64, tick: u64, accent: Color, ready: boo
     let mut lines: Vec<Line> = Vec::new();
 
     if use_mark {
-        for row in wordmark(scale) {
-            lines.push(Line::from(Span::styled(row, Style::default().fg(accent))));
+        for row in wordmark().iter() {
+            lines.push(mark_line(row, scale));
         }
     } else {
-        lines.push(Line::from(center(
+        let pad = (content_w as usize).saturating_sub(7) / 2;
+        lines.push(Line::from(vec![
+            Span::raw(" ".repeat(pad)),
             Span::styled(
-                "tuiOS",
-                Style::default().fg(accent).add_modifier(Modifier::BOLD),
+                " tui ",
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::White)
+                    .add_modifier(Modifier::BOLD),
             ),
-            content_w,
-        )));
+            Span::styled(
+                "OS",
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]));
     }
 
     lines.push(Line::default());
