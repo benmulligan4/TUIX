@@ -156,6 +156,38 @@ impl BrowserState {
         self.recompute_visible();
     }
 
+    /// Move the cursor to the next/previous category header, leaving it put if
+    /// there is none in that direction.
+    pub fn jump_category(&mut self, forward: bool) {
+        let is_header = |r: &RowKind| matches!(r, RowKind::CategoryHeader(_));
+        let target = if forward {
+            self.visible_rows
+                .iter()
+                .enumerate()
+                .skip(self.cursor + 1)
+                .find(|(_, r)| is_header(r))
+                .map(|(i, _)| i)
+        } else {
+            self.visible_rows[..self.cursor.min(self.visible_rows.len())]
+                .iter()
+                .enumerate()
+                .rev()
+                .find(|(_, r)| is_header(r))
+                .map(|(i, _)| i)
+        };
+
+        let Some(idx) = target else { return };
+        self.cursor = idx;
+
+        const VISIBLE_H: usize = 20;
+        if self.cursor < self.scroll {
+            self.scroll = self.cursor;
+        } else if self.cursor >= self.scroll + VISIBLE_H {
+            self.scroll = self.cursor.saturating_sub(VISIBLE_H - 1);
+        }
+        self.probe_selected();
+    }
+
     pub fn recompute_visible(&mut self) {
         let query = self.search_query.to_lowercase();
         let mut rows: Vec<RowKind> = Vec::new();

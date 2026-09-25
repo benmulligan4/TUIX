@@ -3142,6 +3142,30 @@ fn run_app() -> bool {
             continue;
         }
 
+        // ---- Intercept: Shift+Up/Down (or W/S) jumps between browser categories ----
+        if state.focus == FocusTarget::Main
+            && matches!(state.active_page.as_deref(), Some("appstore"))
+            && state.app_store.browser.active
+            && state.app_store.browser.focus
+                == crate::app_store::awesome_ratatui_manager::BrowserFocus::List
+            && state.app_store.confirm_dialog.is_none()
+            && !state.app_store.install_location_dialog
+        {
+            use crossterm::event::{KeyCode, KeyModifiers};
+            let shifted = key_event.modifiers.contains(KeyModifiers::SHIFT);
+            let forward = match key_event.code {
+                KeyCode::Up if shifted => Some(false),
+                KeyCode::Down if shifted => Some(true),
+                KeyCode::Char('W') => Some(false),
+                KeyCode::Char('S') => Some(true),
+                _ => None,
+            };
+            if let Some(forward) = forward {
+                state.app_store.browser.jump_category(forward);
+                continue;
+            }
+        }
+
         // When terminal output is focused, Up/Down/W/S scroll it
         if state.settings.terminal_focused
             && state.focus == FocusTarget::Main
