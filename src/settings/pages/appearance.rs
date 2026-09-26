@@ -19,28 +19,7 @@ const ACCENT_COLORS: &[&str] = &[
 
 const BORDER_STYLES: &[&str] = &["Rounded", "Single", "Double", "None"];
 
-const BOOT_STYLES: &[&str] = &["Modern", "Retro"];
-const BOOT_COLOURS: &[&str] = &[
-    "Default",
-    "Rainbow Dynamic",
-    "Rainbow Static",
-    "Rainbow Vertical",
-    "Nebula",
-    "Aurora",
-    "Warm",
-    "Cool",
-    "Neon",
-    "Synthwave",
-    "Sunset",
-    "Ocean",
-    "Matrix",
-    "Ember",
-];
-const BOOT_LOGOS: &[&str] = &["Static", "Faded"];
-const BOOT_REVEALS: &[&str] = &["Center", "Up", "Down", "Left", "Right"];
-
-/// Rows in display order. The colour and logo rows only apply to the modern
-/// intro, so they are hidden while Retro is selected.
+/// Rows in display order.
 #[derive(Clone, Copy, PartialEq)]
 enum Row {
     Accent,
@@ -52,31 +31,18 @@ enum Row {
     StatusBar,
     NewWindow,
     NavBar,
-    Intro,
-    BootStyle,
-    BootColour,
-    BootLogo,
-    BootReveal,
+    BootSettings,
 }
 
 impl Row {
     /// True for rows picked from a fixed list with ◄ ►.
     fn cycles(self) -> bool {
-        matches!(
-            self,
-            Row::Accent
-                | Row::Dashboard
-                | Row::Border
-                | Row::BootStyle
-                | Row::BootColour
-                | Row::BootLogo
-                | Row::BootReveal
-        )
+        matches!(self, Row::Accent | Row::Dashboard | Row::Border)
     }
 }
 
-fn rows(settings: &Value) -> Vec<Row> {
-    let mut rows = vec![
+fn rows() -> Vec<Row> {
+    vec![
         Row::Accent,
         Row::Clock,
         Row::ClockFormat,
@@ -86,45 +52,17 @@ fn rows(settings: &Value) -> Vec<Row> {
         Row::StatusBar,
         Row::NewWindow,
         Row::NavBar,
-        Row::Intro,
-        Row::BootStyle,
-    ];
-    if boot_style(settings) == "Modern" {
-        rows.push(Row::BootColour);
-        rows.push(Row::BootLogo);
-        rows.push(Row::BootReveal);
-    }
-    rows
+        Row::BootSettings,
+    ]
 }
 
-fn row_at(settings: &Value, cursor: usize) -> Option<Row> {
-    rows(settings).get(cursor).copied()
+fn row_at(cursor: usize) -> Option<Row> {
+    rows().get(cursor).copied()
 }
 
-/// Boot animation style. Rainbow values used to live on this key, so anything
-/// that is not Retro reads as Modern.
-pub fn boot_style(settings: &Value) -> String {
-    let stored = persistence::get_str(settings, "appearance.boot_animation_style", "Modern");
-    if stored.eq_ignore_ascii_case("Retro") { "Retro".into() } else { "Modern".into() }
-}
-
-pub fn boot_colour(settings: &Value) -> String {
-    let stored = persistence::get_str(settings, "appearance.boot_animation_colour", "");
-    if BOOT_COLOURS.contains(&stored.as_str()) {
-        return stored;
-    }
-    let legacy = persistence::get_str(settings, "appearance.boot_animation_style", "");
-    if BOOT_COLOURS.contains(&legacy.as_str()) { legacy } else { "Default".into() }
-}
-
-pub fn boot_logo(settings: &Value) -> String {
-    let stored = persistence::get_str(settings, "appearance.boot_logo", "Static");
-    if BOOT_LOGOS.contains(&stored.as_str()) { stored } else { "Static".into() }
-}
-
-pub fn boot_reveal(settings: &Value) -> String {
-    let stored = persistence::get_str(settings, "appearance.boot_reveal", "Center");
-    if BOOT_REVEALS.contains(&stored.as_str()) { stored } else { "Center".into() }
+/// True when the cursor is on the row that opens the boot animation page.
+pub fn is_boot_settings(cursor: usize) -> bool {
+    row_at(cursor) == Some(Row::BootSettings)
 }
 
 /// Step to the next option in a fixed list and store it.
@@ -215,11 +153,7 @@ fn label_value(row: Row, s: &Value) -> (&'static str, String) {
             },
         ),
         Row::NavBar => ("Navigation Bar", persistence::get_str(s, "appearance.navbar_position", "Top")),
-        Row::Intro => ("Intro Animation", enabled(persistence::get_bool(s, "appearance.intro_animation_enabled", true))),
-        Row::BootStyle => ("Boot Animation", boot_style(s)),
-        Row::BootColour => ("└ Boot Colour", boot_colour(s)),
-        Row::BootLogo => ("└ Boot Logo", boot_logo(s)),
-        Row::BootReveal => ("└ Boot Direction", boot_reveal(s)),
+        Row::BootSettings => ("Boot Up Animation", "Open ›".into()),
     }
 }
 
@@ -229,19 +163,10 @@ fn enabled(on: bool) -> String {
 
 pub fn render(frame: &mut Frame, area: Rect, cursor: usize, _scroll: usize, editing: bool) {
     let settings = persistence::load();
-    let rows = rows(&settings);
-
-    // Short screens can't show every row, so keep the cursor inside the window
-    let height = (area.height as usize).max(1);
-    let first = if rows.len() <= height {
-        0
-    } else {
-        cursor.saturating_sub(height - 1).min(rows.len() - height)
-    };
 
     let value_style = Style::default().fg(Color::White);
     let mut lines: Vec<Line> = Vec::new();
-    for (i, row) in rows.iter().enumerate().skip(first).take(height) {
+    for (i, row) in rows().iter().enumerate() {
         let (label, value) = label_value(*row, &settings);
         let is_active = i == cursor;
         let prefix = if is_active { "  » " } else { "    " };
@@ -271,17 +196,17 @@ pub fn render(frame: &mut Frame, area: Rect, cursor: usize, _scroll: usize, edit
 
 /// Returns true for items that use left/right cycling.
 pub fn is_edit_mode_item(cursor: usize) -> bool {
-    row_at(&persistence::load(), cursor).map_or(false, |row| row.cycles())
+    row_at(cursor).map_or(false, |row| row.cycles())
 }
 
 pub fn item_count() -> usize {
-    rows(&persistence::load()).len()
+    rows().len()
 }
 
 /// Cycle a multi-option item forward (+1) or backward (-1).
 pub fn handle_cycle(cursor: usize, forward: bool) {
     let mut settings = persistence::load();
-    let row = match row_at(&settings, cursor) {
+    let row = match row_at(cursor) {
         Some(row) => row,
         None => return,
     };
@@ -308,26 +233,6 @@ pub fn handle_cycle(cursor: usize, forward: bool) {
             let next = cycle_option(&mut settings, "appearance.border_style", BORDER_STYLES, &current, forward);
             crate::utilities::logging::settings(&format!("Border style changed to {}", next));
         }
-        Row::BootStyle => {
-            let current = boot_style(&settings);
-            let next = cycle_option(&mut settings, "appearance.boot_animation_style", BOOT_STYLES, &current, forward);
-            crate::utilities::logging::settings(&format!("Boot animation set to {}", next));
-        }
-        Row::BootColour => {
-            let current = boot_colour(&settings);
-            let next = cycle_option(&mut settings, "appearance.boot_animation_colour", BOOT_COLOURS, &current, forward);
-            crate::utilities::logging::settings(&format!("Boot colour set to {}", next));
-        }
-        Row::BootLogo => {
-            let current = boot_logo(&settings);
-            let next = cycle_option(&mut settings, "appearance.boot_logo", BOOT_LOGOS, &current, forward);
-            crate::utilities::logging::settings(&format!("Boot logo set to {}", next));
-        }
-        Row::BootReveal => {
-            let current = boot_reveal(&settings);
-            let next = cycle_option(&mut settings, "appearance.boot_reveal", BOOT_REVEALS, &current, forward);
-            crate::utilities::logging::settings(&format!("Boot direction set to {}", next));
-        }
         _ => {}
     }
     persistence::save(&settings);
@@ -336,7 +241,7 @@ pub fn handle_cycle(cursor: usize, forward: bool) {
 /// Handle Enter for binary-toggle items (Clock, Clock Format, Show Seconds).
 pub fn handle_enter(cursor: usize) {
     let mut settings = persistence::load();
-    let row = match row_at(&settings, cursor) {
+    let row = match row_at(cursor) {
         Some(row) => row,
         None => return,
     };
@@ -374,11 +279,6 @@ pub fn handle_enter(cursor: usize) {
             let next = if current == "Bottom" { "Top" } else { "Bottom" };
             persistence::set(&mut settings, "appearance.navbar_position", serde_json::Value::String(next.to_string()));
             crate::utilities::logging::settings(&format!("Navigation bar moved to {}", next.to_lowercase()));
-        }
-        Row::Intro => {
-            let current = persistence::get_bool(&settings, "appearance.intro_animation_enabled", true);
-            persistence::set(&mut settings, "appearance.intro_animation_enabled", serde_json::Value::Bool(!current));
-            crate::utilities::logging::settings(&format!("Intro animation {}", if !current { "enabled" } else { "disabled" }));
         }
         _ => {}
     }

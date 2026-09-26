@@ -1195,7 +1195,12 @@ fn handle_main_key(
                     }
                 }
                 Action::Back => {
-                    ss.in_right_pane = false;
+                    // Back leaves a sub-page before leaving the right pane
+                    if ss.subpage.take().is_some() {
+                        ss.right_cursor = 0;
+                    } else {
+                        ss.in_right_pane = false;
+                    }
                 }
                 _ => {}
             }
@@ -2734,10 +2739,10 @@ fn run_app() -> bool {
             let accent = settings::pages::appearance::color_from_name(
                 &settings::persistence::get_str(&s, "appearance.accent_color", "Cyan"),
             );
-            let style = settings::pages::appearance::boot_style(&s);
-            let colour = settings::pages::appearance::boot_colour(&s);
-            let logo = settings::pages::appearance::boot_logo(&s);
-            let reveal = settings::pages::appearance::boot_reveal(&s);
+            let style = settings::pages::boot::style(&s);
+            let colour = settings::pages::boot::colour(&s);
+            let logo = settings::pages::boot::logo(&s);
+            let reveal = settings::pages::boot::direction(&s);
             let _ = boot_animation::play(
                 &mut terminal,
                 accent,
