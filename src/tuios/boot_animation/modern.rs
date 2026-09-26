@@ -3,7 +3,7 @@
 use std::io::{self, Cursor};
 use std::time::{Duration, Instant};
 
-use image::{imageops, imageops::FilterType, DynamicImage, ImageFormat};
+use image::{imageops, imageops::FilterType, DynamicImage, ImageFormat, Rgb, RgbImage};
 use ratatui::{
     backend::Backend,
     layout::Rect,
@@ -14,9 +14,11 @@ use ratatui::{
 };
 use ratatui_splash_screen::{SplashConfig, SplashScreen};
 
+use crate::settings::pages::appearance::hue_to_rgb;
+
 use super::{bar_spans, center, eased, skip_requested, DURATION_MS, HOLD_MS, STAGES};
 
-const LOGO_PNG: &[u8] = include_bytes!("../tuios_logo.png");
+const LOGO_PNG: &[u8] = include_bytes!("../tuios_logo_static.png");
 
 /// Frames the splash takes to resolve from blurred/dark to the full logo.
 const SPLASH_STEPS: i32 = 12;
@@ -37,9 +39,47 @@ const TRIM_LUMA: u16 = 96;
 /// Subtitle, spacers, bar and status line rendered under the logo.
 const TEXT_ROWS: u16 = 7;
 
+/// Degrees of hue the rainbow tint spans across the logo.
+const RAINBOW_SPAN: f32 = 300.0;
+/// Degrees of hue the rainbow tint drifts per millisecond.
+const RAINBOW_DRIFT: f32 = 0.12;
+
+/// How the logo and loading bar are coloured.
+#[derive(Clone, Copy, PartialEq)]
+pub enum Rainbow {
+    /// Accent colour from Settings.
+    Off,
+    /// Fixed hue gradient across the logo.
+    Static,
+    /// Hue gradient that drifts through the spectrum.
+    Dynamic,
+}
+
+impl Rainbow {
+    pub fn from_style(style: &str) -> Self {
+        if !style.to_ascii_lowercase().starts_with("rainbow") {
+            Self::Off
+        } else if style.eq_ignore_ascii_case("Rainbow Static") {
+            Self::Static
+        } else {
+            Self::Dynamic
+        }
+    }
+
+    /// Hue the logo's left edge sits at for this frame.
+    fn phase(self, tick: u64) -> f32 {
+        match self {
+            Self::Dynamic => (tick as f32 * RAINBOW_DRIFT) % 360.0,
+            _ => 0.0,
+        }
+    }
+}
+
 /// The logo plus the cell box it was built for.
 struct Splash {
     screen: SplashScreen,
+    /// One pixel per terminal cell, kept for re-tinting.
+    cells: RgbImage,
     cells_w: u16,
     cells_h: u16,
 }
@@ -67,22 +107,59 @@ fn trim_padding(logo: DynamicImage) -> DynamicImage {
 /// The widget colours a whole cell from the last dot drawn in it, so the logo is
 /// first resolved down to one pixel per cell and then blown back up to the dot
 /// grid — every dot in a cell then shares a colour instead of fighting for it.
-fn splash_image_data(logo: &DynamicImage, cells_w: u16, cells_h: u16) -> Option<Vec<u8>> {
+fn cell_image(logo: &DynamicImage, cells_w: u16, cells_h: u16) -> RgbImage {
     let cells = logo
         .resize_exact(cells_w as u32, cells_h as u32, FilterType::Lanczos3)
         .to_rgb8();
     // Downscaling smears the small lettering into grey, so pull the edges back
-    let sharpened = DynamicImage::ImageRgb8(imageops::unsharpen(&cells, 0.8, 1));
+    imageops::unsharpen(&cells, 0.8, 1)
+}
+
+fn splash_screen(cells: &RgbImage, steps: i32) -> Option<SplashScreen> {
     let mut data = Vec::new();
-    sharpened
-        .resize_exact(cells_w as u32 * 2, cells_h as u32 * 4, FilterType::Nearest)
+    DynamicImage::ImageRgb8(cells.clone())
+        .resize_exact(cells.width() * 2, cells.height() * 4, FilterType::Nearest)
         .write_to(&mut Cursor::new(&mut data), ImageFormat::Png)
         .ok()?;
-    Some(data)
+    SplashScreen::new(SplashConfig {
+        image_data: &data,
+        sha256sum: None,
+        render_steps: steps,
+        use_colors: true,
+    })
+    .ok()
+}
+
+/// Lay a hue gradient over the mark, keeping each pixel's brightness so the
+/// background stays black.
+fn rainbow_tint(cells: &RgbImage, phase: f32) -> RgbImage {
+    let width = cells.width().max(1) as f32;
+    let mut out = cells.clone();
+    for (x, _, px) in out.enumerate_pixels_mut() {
+        let luma = (px[0] as u32 * 299 + px[1] as u32 * 587 + px[2] as u32 * 114) / 1000;
+        let (r, g, b) = hue_to_rgb((phase + x as f32 / width * RAINBOW_SPAN) % 360.0);
+        *px = Rgb([
+            (r as u32 * luma / 255) as u8,
+            (g as u32 * luma / 255) as u8,
+            (b as u32 * luma / 255) as u8,
+        ]);
+    }
+    out
+}
+
+/// Drift the tint once the blur-in has finished — a one-step screen paints at
+/// full colour on its first render, so the reveal is not restarted.
+fn drift_tint(splash: &mut Splash, phase: f32) {
+    if !splash.screen.is_rendered() {
+        return;
+    }
+    if let Some(screen) = splash_screen(&rainbow_tint(&splash.cells, phase), 1) {
+        splash.screen = screen;
+    }
 }
 
 /// Fit the logo to the screen at its own aspect, leaving room for the text below.
-fn splash(width: u16, height: u16) -> Option<Splash> {
+fn splash(width: u16, height: u16, rainbow: Rainbow) -> Option<Splash> {
     let logo = trim_padding(image::load_from_memory_with_format(LOGO_PNG, ImageFormat::Png).ok()?);
     let (px_w, px_h) = (logo.width().max(1), logo.height().max(1));
 
@@ -94,28 +171,31 @@ fn splash(width: u16, height: u16) -> Option<Splash> {
         return None;
     }
 
-    let data = splash_image_data(&logo, cells_w, cells_h)?;
-    let screen = SplashScreen::new(SplashConfig {
-        image_data: &data,
-        sha256sum: None,
-        render_steps: SPLASH_STEPS,
-        use_colors: true,
-    })
-    .ok()?;
+    let cells = cell_image(&logo, cells_w, cells_h);
+    let screen = if rainbow == Rainbow::Off {
+        splash_screen(&cells, SPLASH_STEPS)?
+    } else {
+        splash_screen(&rainbow_tint(&cells, 0.0), SPLASH_STEPS)?
+    };
     Some(Splash {
         screen,
+        cells,
         cells_w,
         cells_h,
     })
 }
 
 /// Play the intro animation. Returns early if the user presses a key.
-pub fn play<B: Backend>(terminal: &mut Terminal<B>, accent: Color) -> io::Result<()> {
+pub fn play<B: Backend>(
+    terminal: &mut Terminal<B>,
+    accent: Color,
+    rainbow: Rainbow,
+) -> io::Result<()> {
     let start = Instant::now();
     let total = Duration::from_millis(DURATION_MS);
 
     let size = terminal.size()?;
-    let mut splash = splash(size.width, size.height);
+    let mut splash = splash(size.width, size.height, rainbow);
 
     loop {
         let elapsed = start.elapsed();
@@ -124,6 +204,12 @@ pub fn play<B: Backend>(terminal: &mut Terminal<B>, accent: Color) -> io::Result
         }
         let tick = elapsed.as_millis() as u64;
         let progress = eased(tick as f64 / DURATION_MS as f64);
+        let accent = frame_accent(accent, rainbow, tick);
+        if rainbow == Rainbow::Dynamic {
+            if let Some(splash) = splash.as_mut() {
+                drift_tint(splash, rainbow.phase(tick));
+            }
+        }
 
         terminal.draw(|frame| render(frame, splash.as_mut(), progress, tick, accent, false))?;
 
@@ -140,6 +226,12 @@ pub fn play<B: Backend>(terminal: &mut Terminal<B>, accent: Color) -> io::Result
             break;
         }
         let tick = DURATION_MS + elapsed.as_millis() as u64;
+        let accent = frame_accent(accent, rainbow, tick);
+        if rainbow == Rainbow::Dynamic {
+            if let Some(splash) = splash.as_mut() {
+                drift_tint(splash, rainbow.phase(tick));
+            }
+        }
         terminal.draw(|frame| render(frame, splash.as_mut(), 1.0, tick, accent, true))?;
         if skip_requested()? {
             break;
@@ -147,6 +239,15 @@ pub fn play<B: Backend>(terminal: &mut Terminal<B>, accent: Color) -> io::Result
     }
 
     Ok(())
+}
+
+/// In rainbow mode the bar and status text ride the same hue as the logo's left edge.
+fn frame_accent(accent: Color, rainbow: Rainbow, tick: u64) -> Color {
+    if rainbow == Rainbow::Off {
+        return accent;
+    }
+    let (r, g, b) = hue_to_rgb(rainbow.phase(tick));
+    Color::Rgb(r, g, b)
 }
 
 fn render(
@@ -257,3 +358,5 @@ fn render(
         },
     );
 }
+
+

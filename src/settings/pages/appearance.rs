@@ -17,6 +17,8 @@ const ACCENT_COLORS: &[&str] = &[
 
 const BORDER_STYLES: &[&str] = &["Rounded", "Single", "Double", "None"];
 
+const BOOT_STYLES: &[&str] = &["Modern", "Rainbow Dynamic", "Rainbow Static", "Retro"];
+
 /// Convert a border style name to a ratatui BorderType.
 pub fn border_type_from_name(name: &str) -> BorderType {
     match name {
@@ -56,7 +58,7 @@ pub fn color_from_name(name: &str) -> Color {
 }
 
 /// Convert a HSV hue (0-360, s=1, v=1) to an RGB triple.
-fn hue_to_rgb(hue: f32) -> (u8, u8, u8) {
+pub fn hue_to_rgb(hue: f32) -> (u8, u8, u8) {
     let h = hue / 60.0;
     let i = h as u32 % 6;
     let f = h - h.floor();
@@ -134,7 +136,7 @@ pub fn render(frame: &mut Frame, area: Rect, cursor: usize, _scroll: usize, edit
 
 /// Returns true for items that use left/right cycling (more than 2 options).
 pub fn is_edit_mode_item(cursor: usize) -> bool {
-    matches!(cursor, 0 | 4 | 5) // tuiOS Colour, Default Dashboard, Border Style
+    matches!(cursor, 0 | 4 | 5 | 10) // tuiOS Colour, Default Dashboard, Border Style, Boot Animation
 }
 
 pub fn item_count() -> usize { 11 }
@@ -172,6 +174,15 @@ pub fn handle_cycle(cursor: usize, forward: bool) {
             let next = BORDER_STYLES[next_idx];
             persistence::set(&mut settings, "appearance.border_style", serde_json::Value::String(next.to_string()));
             crate::utilities::logging::settings(&format!("Border style changed to {}", next));
+        }
+        10 => {
+            let current = persistence::get_str(&settings, "appearance.boot_animation_style", "Modern");
+            let idx = BOOT_STYLES.iter().position(|&b| b == current).unwrap_or(0);
+            let len = BOOT_STYLES.len();
+            let next_idx = if forward { (idx + 1) % len } else { (idx + len - 1) % len };
+            let next = BOOT_STYLES[next_idx];
+            persistence::set(&mut settings, "appearance.boot_animation_style", serde_json::Value::String(next.to_string()));
+            crate::utilities::logging::settings(&format!("Boot animation set to {}", next));
         }
         _ => {}
     }
@@ -220,12 +231,6 @@ pub fn handle_enter(cursor: usize) {
             let current = persistence::get_bool(&settings, "appearance.intro_animation_enabled", true);
             persistence::set(&mut settings, "appearance.intro_animation_enabled", serde_json::Value::Bool(!current));
             crate::utilities::logging::settings(&format!("Intro animation {}", if !current { "enabled" } else { "disabled" }));
-        }
-        10 => {
-            let current = persistence::get_str(&settings, "appearance.boot_animation_style", "Modern");
-            let next = if current == "Retro" { "Modern" } else { "Retro" };
-            persistence::set(&mut settings, "appearance.boot_animation_style", serde_json::Value::String(next.to_string()));
-            crate::utilities::logging::settings(&format!("Boot animation set to {}", next));
         }
         _ => {}
     }

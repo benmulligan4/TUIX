@@ -1,5 +1,5 @@
 /// Boot intro animation, shown on startup unless disabled in Settings → Appearance.
-/// The two styles share the loading bar, stage text and skip handling.
+/// The styles share the loading bar, stage text and skip handling.
 
 pub mod modern;
 pub mod retro;
@@ -36,7 +36,7 @@ pub fn play<B: Backend>(terminal: &mut Terminal<B>, accent: Color, style: &str) 
     if style.eq_ignore_ascii_case("Retro") {
         retro::play(terminal, accent)
     } else {
-        modern::play(terminal, accent)
+        modern::play(terminal, accent, modern::Rainbow::from_style(style))
     }
 }
 
