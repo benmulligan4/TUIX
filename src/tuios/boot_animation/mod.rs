@@ -1,5 +1,5 @@
 /// Boot intro animation, shown on startup unless disabled in Settings → Appearance.
-/// The two styles share the loading bar, stage text and skip handling.
+/// The styles share the loading bar, stage text and skip handling.
 
 pub mod modern;
 pub mod retro;
@@ -30,13 +30,33 @@ const DURATION_MS: u64 = 2600;
 const FRAME_MS: u64 = 33;
 const HOLD_MS: u64 = 600;
 
+/// Boot animation choices from Settings → Appearance.
+pub struct Options<'a> {
+    pub style: &'a str,
+    pub colour: &'a str,
+    pub logo: &'a str,
+    pub reveal: &'a str,
+}
+
 /// Play the intro animation in the configured style. Returns early if the user
 /// presses a key.
-pub fn play<B: Backend>(terminal: &mut Terminal<B>, accent: Color, style: &str) -> io::Result<()> {
-    if style.eq_ignore_ascii_case("Retro") {
+pub fn play<B: Backend>(
+    terminal: &mut Terminal<B>,
+    accent: Color,
+    options: Options<'_>,
+) -> io::Result<()> {
+    if options.style.eq_ignore_ascii_case("Retro") {
         retro::play(terminal, accent)
     } else {
-        modern::play(terminal, accent)
+        modern::play(
+            terminal,
+            accent,
+            modern::Look {
+                tint: modern::Tint::from_name(options.colour),
+                logo: modern::Logo::from_name(options.logo),
+                reveal: modern::Reveal::from_name(options.reveal),
+            },
+        )
     }
 }
 
