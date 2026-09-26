@@ -20,7 +20,21 @@ const ACCENT_COLORS: &[&str] = &[
 const BORDER_STYLES: &[&str] = &["Rounded", "Single", "Double", "None"];
 
 const BOOT_STYLES: &[&str] = &["Modern", "Retro"];
-const BOOT_COLOURS: &[&str] = &["Default", "Rainbow Dynamic", "Rainbow Static"];
+const BOOT_COLOURS: &[&str] = &[
+    "Default",
+    "Rainbow Dynamic",
+    "Rainbow Static",
+    "Rainbow Vertical",
+    "Aurora",
+    "Warm",
+    "Cool",
+    "Neon",
+    "Synthwave",
+    "Sunset",
+    "Ocean",
+    "Matrix",
+    "Ember",
+];
 const BOOT_LOGOS: &[&str] = &["Static", "Faded"];
 const BOOT_REVEALS: &[&str] = &["Center", "Up", "Down", "Left", "Right"];
 

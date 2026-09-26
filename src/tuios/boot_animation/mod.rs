@@ -52,7 +52,7 @@ pub fn play<B: Backend>(
             terminal,
             accent,
             modern::Look {
-                rainbow: modern::Rainbow::from_name(options.colour),
+                tint: modern::Tint::from_name(options.colour),
                 logo: modern::Logo::from_name(options.logo),
                 reveal: modern::Reveal::from_name(options.reveal),
             },

@@ -50,33 +50,98 @@ const WIPE_MS: u64 = 900;
 /// Fraction of the logo the wipe's soft leading edge covers.
 const WIPE_FEATHER: f32 = 0.3;
 
-/// How the logo and loading bar are coloured.
+/// Colour stops blended evenly along the tint axis.
+type Stops = &'static [(u8, u8, u8)];
+
+const AURORA: Stops = &[(0, 255, 163), (0, 229, 255), (138, 43, 226)];
+const WARM: Stops = &[(255, 61, 0), (255, 145, 0), (255, 214, 0)];
+const COOL: Stops = &[(80, 90, 220), (0, 150, 255), (0, 235, 235)];
+const NEON: Stops = &[(200, 0, 255), (120, 60, 255), (0, 180, 255)];
+const SUNSET: Stops = &[(255, 120, 0), (255, 0, 128), (120, 0, 210)];
+const OCEAN: Stops = &[(0, 70, 190), (0, 150, 220), (0, 240, 220)];
+const SYNTHWAVE: Stops = &[(255, 0, 170), (150, 0, 255), (0, 220, 255)];
+const MATRIX: Stops = &[(0, 120, 30), (0, 255, 70), (190, 255, 190)];
+const EMBER: Stops = &[(255, 220, 120), (255, 90, 0), (150, 0, 0)];
+
+/// Direction a tint runs in.
 #[derive(Clone, Copy, PartialEq)]
-pub enum Rainbow {
-    /// Accent colour from Settings.
-    Off,
-    /// Fixed hue gradient across the logo.
-    Static,
-    /// Hue gradient that drifts through the spectrum.
-    Dynamic,
+pub enum Axis {
+    Across,
+    Down,
 }
 
-impl Rainbow {
+impl Axis {
+    fn at(self, x: u32, y: u32, width: f32, height: f32) -> f32 {
+        match self {
+            Self::Across => x as f32 / width,
+            Self::Down => y as f32 / height,
+        }
+    }
+}
+
+/// The colour wash laid over the logo.
+#[derive(Clone, Copy, PartialEq)]
+pub enum Tint {
+    /// Artwork left as-is, bar on the accent colour from Settings.
+    None,
+    /// Hue wheel, optionally drifting through the spectrum.
+    Rainbow { axis: Axis, drift: bool },
+    /// Fixed palette blended along an axis.
+    Gradient { stops: Stops, axis: Axis },
+}
+
+impl Tint {
     pub fn from_name(name: &str) -> Self {
-        if name.eq_ignore_ascii_case("Rainbow Static") {
-            Self::Static
-        } else if name.to_ascii_lowercase().starts_with("rainbow") {
-            Self::Dynamic
-        } else {
-            Self::Off
+        match name.to_ascii_lowercase().as_str() {
+            "rainbow dynamic" | "rainbow" => Self::Rainbow { axis: Axis::Across, drift: true },
+            "rainbow static" => Self::Rainbow { axis: Axis::Across, drift: false },
+            "rainbow vertical" => Self::Rainbow { axis: Axis::Down, drift: false },
+            "aurora" => Self::Gradient { stops: AURORA, axis: Axis::Across },
+            "warm" => Self::Gradient { stops: WARM, axis: Axis::Across },
+            "cool" => Self::Gradient { stops: COOL, axis: Axis::Across },
+            "neon" => Self::Gradient { stops: NEON, axis: Axis::Across },
+            "synthwave" => Self::Gradient { stops: SYNTHWAVE, axis: Axis::Across },
+            "sunset" => Self::Gradient { stops: SUNSET, axis: Axis::Down },
+            "ocean" => Self::Gradient { stops: OCEAN, axis: Axis::Down },
+            "matrix" => Self::Gradient { stops: MATRIX, axis: Axis::Down },
+            "ember" => Self::Gradient { stops: EMBER, axis: Axis::Down },
+            _ => Self::None,
         }
     }
 
-    /// Hue the logo's left edge sits at for this frame.
+    fn drifts(self) -> bool {
+        matches!(self, Self::Rainbow { drift: true, .. })
+    }
+
+    /// Hue offset for this frame; only the drifting rainbow moves.
     fn phase(self, tick: u64) -> f32 {
+        if self.drifts() { (tick as f32 * RAINBOW_DRIFT) % 360.0 } else { 0.0 }
+    }
+
+    /// Colour for a pixel, before the artwork's own brightness is applied.
+    fn colour(self, x: u32, y: u32, width: f32, height: f32, phase: f32) -> (u8, u8, u8) {
         match self {
-            Self::Dynamic => (tick as f32 * RAINBOW_DRIFT) % 360.0,
-            _ => 0.0,
+            Self::None => (255, 255, 255),
+            Self::Rainbow { axis, .. } => {
+                hue_to_rgb((phase + axis.at(x, y, width, height) * RAINBOW_SPAN) % 360.0)
+            }
+            Self::Gradient { stops, axis } => sample(stops, axis.at(x, y, width, height)),
+        }
+    }
+}
+
+/// Blend between the stops either side of `t`.
+fn sample(stops: Stops, t: f32) -> (u8, u8, u8) {
+    match stops.len() {
+        0 => (255, 255, 255),
+        1 => stops[0],
+        len => {
+            let scaled = t.clamp(0.0, 1.0) * (len - 1) as f32;
+            let i = (scaled as usize).min(len - 2);
+            let f = scaled - i as f32;
+            let (a, b) = (stops[i], stops[i + 1]);
+            let mix = |from: u8, to: u8| (from as f32 + (to as f32 - from as f32) * f) as u8;
+            (mix(a.0, b.0), mix(a.1, b.1), mix(a.2, b.2))
         }
     }
 }
@@ -140,7 +205,7 @@ impl Reveal {
 /// Resolved look of the modern intro.
 #[derive(Clone, Copy)]
 pub struct Look {
-    pub rainbow: Rainbow,
+    pub tint: Tint,
     pub logo: Logo,
     pub reveal: Reveal,
 }
@@ -200,14 +265,15 @@ fn splash_screen(cells: &RgbImage, steps: i32) -> Option<SplashScreen> {
     .ok()
 }
 
-/// Lay a hue gradient over the mark, keeping each pixel's brightness so the
+/// Lay the tint over the mark, keeping each pixel's brightness so the
 /// background stays black.
-fn rainbow_tint(cells: &RgbImage, phase: f32) -> RgbImage {
+fn colourise(cells: &RgbImage, tint: Tint, phase: f32) -> RgbImage {
     let width = cells.width().max(1) as f32;
+    let height = cells.height().max(1) as f32;
     let mut out = cells.clone();
-    for (x, _, px) in out.enumerate_pixels_mut() {
+    for (x, y, px) in out.enumerate_pixels_mut() {
         let luma = (px[0] as u32 * 299 + px[1] as u32 * 587 + px[2] as u32 * 114) / 1000;
-        let (r, g, b) = hue_to_rgb((phase + x as f32 / width * RAINBOW_SPAN) % 360.0);
+        let (r, g, b) = tint.colour(x, y, width, height, phase);
         *px = Rgb([
             (r as u32 * luma / 255) as u8,
             (g as u32 * luma / 255) as u8,
@@ -237,10 +303,10 @@ fn wipe(mut cells: RgbImage, reveal: Reveal, progress: f32) -> RgbImage {
 
 /// The logo as it should look this frame, before it is handed to the widget.
 fn frame_image(cells: &RgbImage, look: Look, tick: u64) -> RgbImage {
-    let tinted = if look.rainbow == Rainbow::Off {
+    let tinted = if look.tint == Tint::None {
         cells.clone()
     } else {
-        rainbow_tint(cells, look.rainbow.phase(tick))
+        colourise(cells, look.tint, look.tint.phase(tick))
     };
     if look.reveal == Reveal::Center {
         tinted
@@ -253,7 +319,7 @@ fn frame_image(cells: &RgbImage, look: Look, tick: u64) -> RgbImage {
 /// paints at full colour on its first render, so the reveal is not restarted.
 fn update(splash: &mut Splash, look: Look, tick: u64) {
     let wiping = look.reveal != Reveal::Center && tick <= WIPE_MS;
-    let drifting = look.rainbow == Rainbow::Dynamic && splash.screen.is_rendered();
+    let drifting = look.tint.drifts() && splash.screen.is_rendered();
     if !wiping && !drifting {
         return;
     }
@@ -303,7 +369,7 @@ pub fn play<B: Backend>(terminal: &mut Terminal<B>, accent: Color, look: Look) -
         }
         let tick = elapsed.as_millis() as u64;
         let progress = eased(tick as f64 / DURATION_MS as f64);
-        let accent = frame_accent(accent, look.rainbow, tick);
+        let accent = frame_accent(accent, look.tint, tick);
         if let Some(splash) = splash.as_mut() {
             update(splash, look, tick);
         }
@@ -323,7 +389,7 @@ pub fn play<B: Backend>(terminal: &mut Terminal<B>, accent: Color, look: Look) -
             break;
         }
         let tick = DURATION_MS + elapsed.as_millis() as u64;
-        let accent = frame_accent(accent, look.rainbow, tick);
+        let accent = frame_accent(accent, look.tint, tick);
         if let Some(splash) = splash.as_mut() {
             update(splash, look, tick);
         }
@@ -336,13 +402,13 @@ pub fn play<B: Backend>(terminal: &mut Terminal<B>, accent: Color, look: Look) -
     Ok(())
 }
 
-/// Only the drifting rainbow takes over the bar and status text; the static one
-/// leaves them on the tuiOS colour.
-fn frame_accent(accent: Color, rainbow: Rainbow, tick: u64) -> Color {
-    if rainbow != Rainbow::Dynamic {
+/// Only the drifting rainbow takes over the bar and status text; every other
+/// tint leaves them on the tuiOS colour.
+fn frame_accent(accent: Color, tint: Tint, tick: u64) -> Color {
+    if !tint.drifts() {
         return accent;
     }
-    let (r, g, b) = hue_to_rgb(rainbow.phase(tick));
+    let (r, g, b) = hue_to_rgb(tint.phase(tick));
     Color::Rgb(r, g, b)
 }
 
@@ -454,6 +520,8 @@ fn render(
         },
     );
 }
+
+
 
 
 
