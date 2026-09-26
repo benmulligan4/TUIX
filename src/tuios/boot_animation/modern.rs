@@ -50,6 +50,9 @@ const WIPE_MS: u64 = 900;
 /// Fraction of the logo the wipe's soft leading edge covers.
 const WIPE_FEATHER: f32 = 0.3;
 
+/// Hue the Nebula wheel opens on — deep blue, running up through purple and pink.
+const NEBULA_START: f32 = 240.0;
+
 /// Colour stops blended evenly along the tint axis.
 type Stops = &'static [(u8, u8, u8)];
 
@@ -84,8 +87,8 @@ impl Axis {
 pub enum Tint {
     /// Artwork left as-is, bar on the accent colour from Settings.
     None,
-    /// Hue wheel, optionally drifting through the spectrum.
-    Rainbow { axis: Axis, drift: bool },
+    /// Hue wheel from `start` degrees, optionally drifting through the spectrum.
+    Rainbow { axis: Axis, drift: bool, start: f32 },
     /// Fixed palette blended along an axis.
     Gradient { stops: Stops, axis: Axis },
 }
@@ -93,9 +96,12 @@ pub enum Tint {
 impl Tint {
     pub fn from_name(name: &str) -> Self {
         match name.to_ascii_lowercase().as_str() {
-            "rainbow dynamic" | "rainbow" => Self::Rainbow { axis: Axis::Across, drift: true },
-            "rainbow static" => Self::Rainbow { axis: Axis::Across, drift: false },
-            "rainbow vertical" => Self::Rainbow { axis: Axis::Down, drift: false },
+            "rainbow dynamic" | "rainbow" => {
+                Self::Rainbow { axis: Axis::Across, drift: true, start: 0.0 }
+            }
+            "rainbow static" => Self::Rainbow { axis: Axis::Across, drift: false, start: 0.0 },
+            "rainbow vertical" => Self::Rainbow { axis: Axis::Down, drift: false, start: 0.0 },
+            "nebula" => Self::Rainbow { axis: Axis::Across, drift: false, start: NEBULA_START },
             "aurora" => Self::Gradient { stops: AURORA, axis: Axis::Across },
             "warm" => Self::Gradient { stops: WARM, axis: Axis::Across },
             "cool" => Self::Gradient { stops: COOL, axis: Axis::Across },
@@ -122,8 +128,8 @@ impl Tint {
     fn colour(self, x: u32, y: u32, width: f32, height: f32, phase: f32) -> (u8, u8, u8) {
         match self {
             Self::None => (255, 255, 255),
-            Self::Rainbow { axis, .. } => {
-                hue_to_rgb((phase + axis.at(x, y, width, height) * RAINBOW_SPAN) % 360.0)
+            Self::Rainbow { axis, start, .. } => {
+                hue_to_rgb((start + phase + axis.at(x, y, width, height) * RAINBOW_SPAN) % 360.0)
             }
             Self::Gradient { stops, axis } => sample(stops, axis.at(x, y, width, height)),
         }
@@ -520,6 +526,7 @@ fn render(
         },
     );
 }
+
 
 
 

@@ -25,6 +25,7 @@ const BOOT_COLOURS: &[&str] = &[
     "Rainbow Dynamic",
     "Rainbow Static",
     "Rainbow Vertical",
+    "Nebula",
     "Aurora",
     "Warm",
     "Cool",
