@@ -36,7 +36,10 @@ fn settings_path() -> PathBuf {
             "boot_animation_style": "Modern",
             "boot_animation_colour": "Default",
             "boot_logo": "Static",
-            "boot_reveal": "Center"
+            "boot_reveal": "Center",
+            "boot_duration": "Default",
+            "boot_splash_effect": true,
+            "boot_preview": true
         },
         "display": {
             "fullscreen": false

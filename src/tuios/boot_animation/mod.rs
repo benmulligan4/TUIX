@@ -4,15 +4,17 @@
 pub mod modern;
 pub mod retro;
 
+use std::cell::RefCell;
 use std::io;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crossterm::event::{self, Event, KeyEventKind};
 use ratatui::{
     backend::Backend,
+    layout::Rect,
     style::{Color, Style},
     text::Span,
-    Terminal,
+    Frame, Terminal,
 };
 
 /// Partial-block characters for sub-cell progress bar resolution.
@@ -31,11 +33,39 @@ const FRAME_MS: u64 = 33;
 const HOLD_MS: u64 = 600;
 
 /// Boot animation choices from Settings → Appearance.
+#[derive(Clone, Copy)]
 pub struct Options<'a> {
     pub style: &'a str,
     pub colour: &'a str,
     pub logo: &'a str,
     pub reveal: &'a str,
+    pub duration: &'a str,
+    pub effect: bool,
+}
+
+impl Options<'_> {
+    fn is_retro(&self) -> bool {
+        self.style.eq_ignore_ascii_case("Retro")
+    }
+
+    fn look(&self) -> modern::Look {
+        modern::Look {
+            tint: modern::Tint::from_name(self.colour),
+            logo: modern::Logo::from_name(self.logo),
+            reveal: modern::Reveal::from_name(self.reveal),
+            effect: self.effect,
+            duration_ms: duration_ms(self.duration),
+        }
+    }
+}
+
+/// How long the intro runs before the hold, in milliseconds.
+pub fn duration_ms(name: &str) -> u64 {
+    match name.to_ascii_lowercase().as_str() {
+        "short" => 1400,
+        "long" => 4600,
+        _ => DURATION_MS,
+    }
 }
 
 /// Play the intro animation in the configured style. Returns early if the user
@@ -45,19 +75,74 @@ pub fn play<B: Backend>(
     accent: Color,
     options: Options<'_>,
 ) -> io::Result<()> {
-    if options.style.eq_ignore_ascii_case("Retro") {
-        retro::play(terminal, accent)
+    let duration = duration_ms(options.duration);
+    if options.is_retro() {
+        retro::play(terminal, accent, duration)
     } else {
-        modern::play(
-            terminal,
-            accent,
-            modern::Look {
-                tint: modern::Tint::from_name(options.colour),
-                logo: modern::Logo::from_name(options.logo),
-                reveal: modern::Reveal::from_name(options.reveal),
-            },
-        )
+        modern::play(terminal, accent, options.look(), duration)
     }
+}
+
+/// What the preview was last built for; a change replays it from the start.
+#[derive(PartialEq)]
+struct PreviewKey {
+    retro: bool,
+    look: modern::Look,
+    duration: u64,
+    area: (u16, u16),
+}
+
+struct PreviewState {
+    key: PreviewKey,
+    started: Instant,
+    splash: Option<modern::Splash>,
+}
+
+thread_local! {
+    static PREVIEW: RefCell<Option<PreviewState>> = const { RefCell::new(None) };
+}
+
+/// Draw the intro into `area` for the Settings preview. It runs through once
+/// and then holds on the finished frame until the options change.
+pub fn draw_preview(frame: &mut Frame, area: Rect, accent: Color, options: Options<'_>) {
+    if area.width < 8 || area.height < 4 {
+        return;
+    }
+    let key = PreviewKey {
+        retro: options.is_retro(),
+        look: options.look(),
+        duration: duration_ms(options.duration),
+        area: (area.width, area.height),
+    };
+
+    PREVIEW.with(|cell| {
+        let mut slot = cell.borrow_mut();
+        if !matches!(&*slot, Some(state) if state.key == key) {
+            let splash = if key.retro {
+                None
+            } else {
+                modern::build_splash(area.width, area.height, key.look)
+            };
+            *slot = Some(PreviewState { key, started: Instant::now(), splash });
+        }
+
+        let Some(state) = slot.as_mut() else { return };
+        let duration = state.key.duration;
+        let tick = (state.started.elapsed().as_millis() as u64).min(duration + HOLD_MS);
+        let ready = tick >= duration;
+        let progress = if ready { 1.0 } else { eased(tick as f64 / duration as f64) };
+
+        if state.key.retro {
+            retro::render(frame, area, progress, tick, accent, ready);
+        } else {
+            let look = state.key.look;
+            if let Some(splash) = state.splash.as_mut() {
+                modern::update(splash, look, tick);
+            }
+            let accent = modern::frame_accent(accent, look.tint, tick);
+            modern::render(frame, area, state.splash.as_mut(), progress, tick, accent, ready);
+        }
+    });
 }
 
 fn skip_requested() -> io::Result<bool> {
@@ -102,3 +187,4 @@ fn bar_spans(width: usize, ratio: f64, accent: Color, trough: Color) -> Vec<Span
     }
     spans
 }
+

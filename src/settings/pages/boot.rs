@@ -33,6 +33,10 @@ const COLOURS: &[&str] = &[
 ];
 const LOGOS: &[&str] = &["Static", "Faded"];
 const DIRECTIONS: &[&str] = &["Center", "Up", "Down", "Left", "Right"];
+const DURATIONS: &[&str] = &["Short", "Default", "Long"];
+
+/// Height the intro needs before a preview is worth drawing.
+const PREVIEW_MIN_ROWS: u16 = 8;
 
 /// Rows in display order. Colour, logo and direction only apply to the modern
 /// intro, so they are hidden while Retro is selected.
@@ -40,23 +44,31 @@ const DIRECTIONS: &[&str] = &["Center", "Up", "Down", "Left", "Right"];
 enum Row {
     Enabled,
     Style,
+    Duration,
     Colour,
     Logo,
+    Effect,
     Direction,
+    Preview,
 }
 
 impl Row {
     /// True for rows picked from a fixed list with ◄ ►.
     fn cycles(self) -> bool {
-        self != Row::Enabled
+        !matches!(self, Row::Enabled | Row::Effect | Row::Preview)
     }
 }
 
 fn rows(settings: &Value) -> Vec<Row> {
-    let mut rows = vec![Row::Enabled, Row::Style];
+    let mut rows = vec![Row::Enabled, Row::Style, Row::Duration];
     if style(settings) == "Modern" {
-        rows.extend([Row::Colour, Row::Logo, Row::Direction]);
+        rows.extend([Row::Colour, Row::Logo, Row::Effect]);
+        // Direction only means something while the reveal effect is on
+        if effect(settings) {
+            rows.push(Row::Direction);
+        }
     }
+    rows.push(Row::Preview);
     rows
 }
 
@@ -90,6 +102,19 @@ pub fn direction(settings: &Value) -> String {
     if DIRECTIONS.contains(&stored.as_str()) { stored } else { "Center".into() }
 }
 
+pub fn duration(settings: &Value) -> String {
+    let stored = persistence::get_str(settings, "appearance.boot_duration", "Default");
+    if DURATIONS.contains(&stored.as_str()) { stored } else { "Default".into() }
+}
+
+pub fn effect(settings: &Value) -> bool {
+    persistence::get_bool(settings, "appearance.boot_splash_effect", true)
+}
+
+fn preview_enabled(settings: &Value) -> bool {
+    persistence::get_bool(settings, "appearance.boot_preview", true)
+}
+
 fn label_value(row: Row, s: &Value) -> (&'static str, String) {
     match row {
         Row::Enabled => (
@@ -101,18 +126,28 @@ fn label_value(row: Row, s: &Value) -> (&'static str, String) {
             },
         ),
         Row::Style => ("Animation Style", style(s)),
+        Row::Duration => ("Duration", duration(s)),
         Row::Colour => ("Colour", colour(s)),
         Row::Logo => ("Logo", logo(s)),
+        Row::Effect => (
+            "Splash Effect",
+            if effect(s) { "Enabled".into() } else { "Disabled".into() },
+        ),
         Row::Direction => ("Direction", direction(s)),
+        Row::Preview => (
+            "Preview",
+            if preview_enabled(s) { "Enabled".into() } else { "Disabled".into() },
+        ),
     }
 }
 
 pub fn render(frame: &mut Frame, area: Rect, cursor: usize, _scroll: usize, editing: bool) {
     let settings = persistence::load();
+    let rows = rows(&settings);
 
     let value_style = Style::default().fg(Color::White);
     let mut lines: Vec<Line> = Vec::new();
-    for (i, row) in rows(&settings).iter().enumerate() {
+    for (i, row) in rows.iter().enumerate() {
         let (label, value) = label_value(*row, &settings);
         let is_active = i == cursor;
         let prefix = if is_active { "  » " } else { "    " };
@@ -136,13 +171,64 @@ pub fn render(frame: &mut Frame, area: Rect, cursor: usize, _scroll: usize, edit
         }
     }
 
-    lines.push(Line::default());
-    lines.push(Line::from(Span::styled(
-        "    Back returns to Appearance",
-        Style::default().fg(Color::DarkGray),
-    )));
+    let list_h = (lines.len() as u16).min(area.height);
+    frame.render_widget(
+        Paragraph::new(lines),
+        Rect { height: list_h, ..area },
+    );
 
-    frame.render_widget(Paragraph::new(lines), area);
+    let mut preview = Rect {
+        y: area.y + list_h,
+        height: area.height.saturating_sub(list_h),
+        ..area
+    };
+    if !preview_enabled(&settings) || preview.height < PREVIEW_MIN_ROWS {
+        return;
+    }
+
+    // The heading is the first thing to go when the box is tight
+    if preview.height >= PREVIEW_MIN_ROWS + 2 {
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                "    Preview",
+                Style::default().fg(Color::DarkGray),
+            ))),
+            Rect { y: preview.y + 1, height: 1, ..preview },
+        );
+        preview = Rect {
+            y: preview.y + 2,
+            height: preview.height - 2,
+            ..preview
+        };
+    }
+
+    let accent = super::appearance::color_from_name(&persistence::get_str(
+        &settings,
+        "appearance.accent_color",
+        "Cyan",
+    ));
+    crate::tuios::boot_animation::draw_preview(frame, preview, accent, options(&settings));
+}
+
+/// The animation options as currently stored, for the preview.
+fn options(settings: &Value) -> crate::tuios::boot_animation::Options<'static> {
+    // Match the stored value back to its entry in the option list so the
+    // preview can borrow a 'static name
+    fn fixed(value: String, options: &'static [&'static str], fallback: &'static str) -> &'static str {
+        options
+            .iter()
+            .find(|o| **o == value)
+            .copied()
+            .unwrap_or(fallback)
+    }
+    crate::tuios::boot_animation::Options {
+        style: fixed(style(settings), STYLES, "Modern"),
+        colour: fixed(colour(settings), COLOURS, "Default"),
+        logo: fixed(logo(settings), LOGOS, "Static"),
+        reveal: fixed(direction(settings), DIRECTIONS, "Center"),
+        duration: fixed(duration(settings), DURATIONS, "Default"),
+        effect: effect(settings),
+    }
 }
 
 /// Returns true for items that use left/right cycling.
@@ -182,25 +268,56 @@ pub fn handle_cycle(cursor: usize, forward: bool) {
             let next = cycle_option(&mut settings, "appearance.boot_reveal", DIRECTIONS, &current, forward);
             crate::utilities::logging::settings(&format!("Boot direction set to {}", next));
         }
-        Row::Enabled => {}
+        Row::Duration => {
+            let current = duration(&settings);
+            let next = cycle_option(&mut settings, "appearance.boot_duration", DURATIONS, &current, forward);
+            crate::utilities::logging::settings(&format!("Boot duration set to {}", next));
+        }
+        Row::Enabled | Row::Effect | Row::Preview => {}
     }
     persistence::save(&settings);
 }
 
 pub fn handle_enter(cursor: usize) {
     let mut settings = persistence::load();
-    if row_at(&settings, cursor) != Some(Row::Enabled) {
-        return;
+    match row_at(&settings, cursor) {
+        Some(Row::Enabled) => {
+            let current = persistence::get_bool(&settings, "appearance.intro_animation_enabled", true);
+            persistence::set(
+                &mut settings,
+                "appearance.intro_animation_enabled",
+                serde_json::Value::Bool(!current),
+            );
+            crate::utilities::logging::settings(&format!(
+                "Intro animation {}",
+                if !current { "enabled" } else { "disabled" }
+            ));
+        }
+        Some(Row::Effect) => {
+            let current = effect(&settings);
+            persistence::set(
+                &mut settings,
+                "appearance.boot_splash_effect",
+                serde_json::Value::Bool(!current),
+            );
+            crate::utilities::logging::settings(&format!(
+                "Boot splash effect {}",
+                if !current { "enabled" } else { "disabled" }
+            ));
+        }
+        Some(Row::Preview) => {
+            let current = preview_enabled(&settings);
+            persistence::set(
+                &mut settings,
+                "appearance.boot_preview",
+                serde_json::Value::Bool(!current),
+            );
+            crate::utilities::logging::settings(&format!(
+                "Boot preview {}",
+                if !current { "enabled" } else { "disabled" }
+            ));
+        }
+        _ => return,
     }
-    let current = persistence::get_bool(&settings, "appearance.intro_animation_enabled", true);
-    persistence::set(
-        &mut settings,
-        "appearance.intro_animation_enabled",
-        serde_json::Value::Bool(!current),
-    );
-    crate::utilities::logging::settings(&format!(
-        "Intro animation {}",
-        if !current { "enabled" } else { "disabled" }
-    ));
     persistence::save(&settings);
 }

@@ -2743,6 +2743,7 @@ fn run_app() -> bool {
             let colour = settings::pages::boot::colour(&s);
             let logo = settings::pages::boot::logo(&s);
             let reveal = settings::pages::boot::direction(&s);
+            let duration = settings::pages::boot::duration(&s);
             let _ = boot_animation::play(
                 &mut terminal,
                 accent,
@@ -2751,6 +2752,8 @@ fn run_app() -> bool {
                     colour: &colour,
                     logo: &logo,
                     reveal: &reveal,
+                    duration: &duration,
+                    effect: settings::pages::boot::effect(&s),
                 },
             );
         }

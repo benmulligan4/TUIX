@@ -16,7 +16,7 @@ use ratatui_splash_screen::{SplashConfig, SplashScreen};
 
 use crate::settings::pages::appearance::hue_to_rgb;
 
-use super::{bar_spans, center, eased, skip_requested, DURATION_MS, HOLD_MS, STAGES};
+use super::{bar_spans, center, eased, skip_requested, HOLD_MS, STAGES};
 
 const LOGO_FADED: &[u8] = include_bytes!("../tuios_logo_faded.png");
 const LOGO_STATIC: &[u8] = include_bytes!("../tuios_logo_static.png");
@@ -209,15 +209,34 @@ impl Reveal {
 }
 
 /// Resolved look of the modern intro.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 pub struct Look {
     pub tint: Tint,
     pub logo: Logo,
     pub reveal: Reveal,
+    /// When false the logo appears at once, with no reveal step.
+    pub effect: bool,
+    /// Total run time, which the reveal is scaled against.
+    pub duration_ms: u64,
+}
+
+impl Look {
+    fn wipes(self) -> bool {
+        self.effect && self.reveal != Reveal::Center
+    }
+
+    /// The reveal keeps its share of the run, so a short boot wipes in quickly.
+    fn wipe_ms(self) -> u64 {
+        (WIPE_MS * self.duration_ms / super::DURATION_MS).max(200)
+    }
+
+    fn steps(self) -> i32 {
+        ((SPLASH_STEPS as u64 * self.duration_ms / super::DURATION_MS) as i32).clamp(3, 40)
+    }
 }
 
 /// The logo plus the cell box it was built for.
-struct Splash {
+pub struct Splash {
     screen: SplashScreen,
     /// One pixel per terminal cell, kept for re-tinting.
     cells: RgbImage,
@@ -314,17 +333,17 @@ fn frame_image(cells: &RgbImage, look: Look, tick: u64) -> RgbImage {
     } else {
         colourise(cells, look.tint, look.tint.phase(tick))
     };
-    if look.reveal == Reveal::Center {
-        tinted
+    if look.wipes() {
+        wipe(tinted, look.reveal, (tick as f32 / look.wipe_ms() as f32).min(1.0))
     } else {
-        wipe(tinted, look.reveal, (tick as f32 / WIPE_MS as f32).min(1.0))
+        tinted
     }
 }
 
 /// Rebuild the splash when the wipe or the tint has moved on. A one-step screen
 /// paints at full colour on its first render, so the reveal is not restarted.
-fn update(splash: &mut Splash, look: Look, tick: u64) {
-    let wiping = look.reveal != Reveal::Center && tick <= WIPE_MS;
+pub(super) fn update(splash: &mut Splash, look: Look, tick: u64) {
+    let wiping = look.wipes() && tick <= look.wipe_ms();
     let drifting = look.tint.drifts() && splash.screen.is_rendered();
     if !wiping && !drifting {
         return;
@@ -335,7 +354,7 @@ fn update(splash: &mut Splash, look: Look, tick: u64) {
 }
 
 /// Fit the logo to the screen at its own aspect, leaving room for the text below.
-fn splash(width: u16, height: u16, look: Look) -> Option<Splash> {
+pub(super) fn build_splash(width: u16, height: u16, look: Look) -> Option<Splash> {
     let logo =
         trim_padding(image::load_from_memory_with_format(look.logo.bytes(), ImageFormat::Png).ok()?);
     let (px_w, px_h) = (logo.width().max(1), logo.height().max(1));
@@ -349,7 +368,7 @@ fn splash(width: u16, height: u16, look: Look) -> Option<Splash> {
     }
 
     // A directional wipe does the revealing itself, so the widget paints in one step
-    let steps = if look.reveal == Reveal::Center { SPLASH_STEPS } else { 1 };
+    let steps = if look.effect && !look.wipes() { look.steps() } else { 1 };
     let cells = cell_image(&logo, cells_w, cells_h);
     let screen = splash_screen(&frame_image(&cells, look, 0), steps)?;
     Some(Splash {
@@ -361,12 +380,17 @@ fn splash(width: u16, height: u16, look: Look) -> Option<Splash> {
 }
 
 /// Play the intro animation. Returns early if the user presses a key.
-pub fn play<B: Backend>(terminal: &mut Terminal<B>, accent: Color, look: Look) -> io::Result<()> {
+pub fn play<B: Backend>(
+    terminal: &mut Terminal<B>,
+    accent: Color,
+    look: Look,
+    duration_ms: u64,
+) -> io::Result<()> {
     let start = Instant::now();
-    let total = Duration::from_millis(DURATION_MS);
+    let total = Duration::from_millis(duration_ms);
 
     let size = terminal.size()?;
-    let mut splash = splash(size.width, size.height, look);
+    let mut splash = build_splash(size.width, size.height, look);
 
     loop {
         let elapsed = start.elapsed();
@@ -374,13 +398,15 @@ pub fn play<B: Backend>(terminal: &mut Terminal<B>, accent: Color, look: Look) -
             break;
         }
         let tick = elapsed.as_millis() as u64;
-        let progress = eased(tick as f64 / DURATION_MS as f64);
+        let progress = eased(tick as f64 / duration_ms as f64);
         let accent = frame_accent(accent, look.tint, tick);
         if let Some(splash) = splash.as_mut() {
             update(splash, look, tick);
         }
 
-        terminal.draw(|frame| render(frame, splash.as_mut(), progress, tick, accent, false))?;
+        terminal.draw(|frame| {
+            render(frame, frame.area(), splash.as_mut(), progress, tick, accent, false)
+        })?;
 
         if skip_requested()? {
             return Ok(());
@@ -394,12 +420,14 @@ pub fn play<B: Backend>(terminal: &mut Terminal<B>, accent: Color, look: Look) -
         if elapsed >= Duration::from_millis(HOLD_MS) {
             break;
         }
-        let tick = DURATION_MS + elapsed.as_millis() as u64;
+        let tick = duration_ms + elapsed.as_millis() as u64;
         let accent = frame_accent(accent, look.tint, tick);
         if let Some(splash) = splash.as_mut() {
             update(splash, look, tick);
         }
-        terminal.draw(|frame| render(frame, splash.as_mut(), 1.0, tick, accent, true))?;
+        terminal.draw(|frame| {
+            render(frame, frame.area(), splash.as_mut(), 1.0, tick, accent, true)
+        })?;
         if skip_requested()? {
             break;
         }
@@ -410,7 +438,7 @@ pub fn play<B: Backend>(terminal: &mut Terminal<B>, accent: Color, look: Look) -
 
 /// Only the drifting rainbow takes over the bar and status text; every other
 /// tint leaves them on the tuiOS colour.
-fn frame_accent(accent: Color, tint: Tint, tick: u64) -> Color {
+pub(super) fn frame_accent(accent: Color, tint: Tint, tick: u64) -> Color {
     if !tint.drifts() {
         return accent;
     }
@@ -418,15 +446,15 @@ fn frame_accent(accent: Color, tint: Tint, tick: u64) -> Color {
     Color::Rgb(r, g, b)
 }
 
-fn render(
+pub(super) fn render(
     frame: &mut Frame,
+    area: Rect,
     splash: Option<&mut Splash>,
     progress: f64,
     tick: u64,
     accent: Color,
     ready: bool,
 ) {
-    let area = frame.area();
     let progress = progress.clamp(0.0, 1.0);
 
     let dim = Color::Rgb(70, 70, 70);
@@ -526,6 +554,7 @@ fn render(
         },
     );
 }
+
 
 
 
