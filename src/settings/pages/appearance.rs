@@ -229,10 +229,19 @@ fn enabled(on: bool) -> String {
 
 pub fn render(frame: &mut Frame, area: Rect, cursor: usize, _scroll: usize, editing: bool) {
     let settings = persistence::load();
+    let rows = rows(&settings);
+
+    // Short screens can't show every row, so keep the cursor inside the window
+    let height = (area.height as usize).max(1);
+    let first = if rows.len() <= height {
+        0
+    } else {
+        cursor.saturating_sub(height - 1).min(rows.len() - height)
+    };
 
     let value_style = Style::default().fg(Color::White);
     let mut lines: Vec<Line> = Vec::new();
-    for (i, row) in rows(&settings).iter().enumerate() {
+    for (i, row) in rows.iter().enumerate().skip(first).take(height) {
         let (label, value) = label_value(*row, &settings);
         let is_active = i == cursor;
         let prefix = if is_active { "  » " } else { "    " };
