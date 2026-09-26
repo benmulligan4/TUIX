@@ -32,11 +32,22 @@ const HOLD_MS: u64 = 600;
 
 /// Play the intro animation in the configured style. Returns early if the user
 /// presses a key.
-pub fn play<B: Backend>(terminal: &mut Terminal<B>, accent: Color, style: &str) -> io::Result<()> {
+pub fn play<B: Backend>(
+    terminal: &mut Terminal<B>,
+    accent: Color,
+    style: &str,
+    colour: &str,
+    logo: &str,
+) -> io::Result<()> {
     if style.eq_ignore_ascii_case("Retro") {
         retro::play(terminal, accent)
     } else {
-        modern::play(terminal, accent, modern::Rainbow::from_style(style))
+        modern::play(
+            terminal,
+            accent,
+            modern::Rainbow::from_name(colour),
+            modern::Logo::from_name(logo),
+        )
     }
 }
 

@@ -18,7 +18,8 @@ use crate::settings::pages::appearance::hue_to_rgb;
 
 use super::{bar_spans, center, eased, skip_requested, DURATION_MS, HOLD_MS, STAGES};
 
-const LOGO_PNG: &[u8] = include_bytes!("../tuios_logo_static.png");
+const LOGO_FADED: &[u8] = include_bytes!("../tuios_logo_faded.png");
+const LOGO_STATIC: &[u8] = include_bytes!("../tuios_logo_static.png");
 
 /// Frames the splash takes to resolve from blurred/dark to the full logo.
 const SPLASH_STEPS: i32 = 12;
@@ -56,13 +57,13 @@ pub enum Rainbow {
 }
 
 impl Rainbow {
-    pub fn from_style(style: &str) -> Self {
-        if !style.to_ascii_lowercase().starts_with("rainbow") {
-            Self::Off
-        } else if style.eq_ignore_ascii_case("Rainbow Static") {
+    pub fn from_name(name: &str) -> Self {
+        if name.eq_ignore_ascii_case("Rainbow Static") {
             Self::Static
-        } else {
+        } else if name.to_ascii_lowercase().starts_with("rainbow") {
             Self::Dynamic
+        } else {
+            Self::Off
         }
     }
 
@@ -71,6 +72,28 @@ impl Rainbow {
         match self {
             Self::Dynamic => (tick as f32 * RAINBOW_DRIFT) % 360.0,
             _ => 0.0,
+        }
+    }
+}
+
+/// Which artwork the splash is built from.
+#[derive(Clone, Copy, PartialEq)]
+pub enum Logo {
+    /// Badge that fades out to the left.
+    Faded,
+    /// Solid badge.
+    Static,
+}
+
+impl Logo {
+    pub fn from_name(name: &str) -> Self {
+        if name.eq_ignore_ascii_case("Faded") { Self::Faded } else { Self::Static }
+    }
+
+    fn bytes(self) -> &'static [u8] {
+        match self {
+            Self::Faded => LOGO_FADED,
+            Self::Static => LOGO_STATIC,
         }
     }
 }
@@ -159,8 +182,8 @@ fn drift_tint(splash: &mut Splash, phase: f32) {
 }
 
 /// Fit the logo to the screen at its own aspect, leaving room for the text below.
-fn splash(width: u16, height: u16, rainbow: Rainbow) -> Option<Splash> {
-    let logo = trim_padding(image::load_from_memory_with_format(LOGO_PNG, ImageFormat::Png).ok()?);
+fn splash(width: u16, height: u16, rainbow: Rainbow, logo: Logo) -> Option<Splash> {
+    let logo = trim_padding(image::load_from_memory_with_format(logo.bytes(), ImageFormat::Png).ok()?);
     let (px_w, px_h) = (logo.width().max(1), logo.height().max(1));
 
     let room_w = (width as u32 * SPLASH_WIDTH_PCT / 100).min(SPLASH_MAX_W as u32);
@@ -190,12 +213,13 @@ pub fn play<B: Backend>(
     terminal: &mut Terminal<B>,
     accent: Color,
     rainbow: Rainbow,
+    logo: Logo,
 ) -> io::Result<()> {
     let start = Instant::now();
     let total = Duration::from_millis(DURATION_MS);
 
     let size = terminal.size()?;
-    let mut splash = splash(size.width, size.height, rainbow);
+    let mut splash = splash(size.width, size.height, rainbow, logo);
 
     loop {
         let elapsed = start.elapsed();
@@ -358,5 +382,6 @@ fn render(
         },
     );
 }
+
 
 

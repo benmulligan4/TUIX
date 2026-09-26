@@ -8,6 +8,8 @@ use ratatui::{
     Frame,
 };
 
+use serde_json::Value;
+
 use crate::settings::persistence;
 
 const ACCENT_COLORS: &[&str] = &[
@@ -17,7 +19,98 @@ const ACCENT_COLORS: &[&str] = &[
 
 const BORDER_STYLES: &[&str] = &["Rounded", "Single", "Double", "None"];
 
-const BOOT_STYLES: &[&str] = &["Modern", "Rainbow Dynamic", "Rainbow Static", "Retro"];
+const BOOT_STYLES: &[&str] = &["Modern", "Retro"];
+const BOOT_COLOURS: &[&str] = &["Default", "Rainbow Dynamic", "Rainbow Static"];
+const BOOT_LOGOS: &[&str] = &["Static", "Faded"];
+
+/// Rows in display order. The colour and logo rows only apply to the modern
+/// intro, so they are hidden while Retro is selected.
+#[derive(Clone, Copy, PartialEq)]
+enum Row {
+    Accent,
+    Clock,
+    ClockFormat,
+    ClockSeconds,
+    Dashboard,
+    Border,
+    StatusBar,
+    NewWindow,
+    NavBar,
+    Intro,
+    BootStyle,
+    BootColour,
+    BootLogo,
+}
+
+impl Row {
+    /// True for rows picked from a fixed list with ◄ ►.
+    fn cycles(self) -> bool {
+        matches!(
+            self,
+            Row::Accent
+                | Row::Dashboard
+                | Row::Border
+                | Row::BootStyle
+                | Row::BootColour
+                | Row::BootLogo
+        )
+    }
+}
+
+fn rows(settings: &Value) -> Vec<Row> {
+    let mut rows = vec![
+        Row::Accent,
+        Row::Clock,
+        Row::ClockFormat,
+        Row::ClockSeconds,
+        Row::Dashboard,
+        Row::Border,
+        Row::StatusBar,
+        Row::NewWindow,
+        Row::NavBar,
+        Row::Intro,
+        Row::BootStyle,
+    ];
+    if boot_style(settings) == "Modern" {
+        rows.push(Row::BootColour);
+        rows.push(Row::BootLogo);
+    }
+    rows
+}
+
+fn row_at(settings: &Value, cursor: usize) -> Option<Row> {
+    rows(settings).get(cursor).copied()
+}
+
+/// Boot animation style. Rainbow values used to live on this key, so anything
+/// that is not Retro reads as Modern.
+pub fn boot_style(settings: &Value) -> String {
+    let stored = persistence::get_str(settings, "appearance.boot_animation_style", "Modern");
+    if stored.eq_ignore_ascii_case("Retro") { "Retro".into() } else { "Modern".into() }
+}
+
+pub fn boot_colour(settings: &Value) -> String {
+    let stored = persistence::get_str(settings, "appearance.boot_animation_colour", "");
+    if BOOT_COLOURS.contains(&stored.as_str()) {
+        return stored;
+    }
+    let legacy = persistence::get_str(settings, "appearance.boot_animation_style", "");
+    if BOOT_COLOURS.contains(&legacy.as_str()) { legacy } else { "Default".into() }
+}
+
+pub fn boot_logo(settings: &Value) -> String {
+    let stored = persistence::get_str(settings, "appearance.boot_logo", "Static");
+    if BOOT_LOGOS.contains(&stored.as_str()) { stored } else { "Static".into() }
+}
+
+/// Step to the next option in a fixed list and store it.
+fn cycle_option(settings: &mut Value, key: &str, options: &[&str], current: &str, forward: bool) -> String {
+    let idx = options.iter().position(|&o| o == current).unwrap_or(0);
+    let len = options.len();
+    let next = options[if forward { (idx + 1) % len } else { (idx + len - 1) % len }];
+    persistence::set(settings, key, Value::String(next.to_string()));
+    next.to_string()
+}
 
 /// Convert a border style name to a ratatui BorderType.
 pub fn border_type_from_name(name: &str) -> BorderType {
@@ -74,40 +167,48 @@ pub fn hue_to_rgb(hue: f32) -> (u8, u8, u8) {
     }
 }
 
+fn label_value(row: Row, s: &Value) -> (&'static str, String) {
+    match row {
+        Row::Accent => ("tuiOS Colour", persistence::get_str(s, "appearance.accent_color", "Cyan")),
+        Row::Clock => ("Clock", enabled(persistence::get_bool(s, "appearance.clock_enabled", false))),
+        Row::ClockFormat => (
+            "Clock Format",
+            if persistence::get_bool(s, "appearance.clock_format_24h", true) { "24 hour".into() } else { "12 hour".into() },
+        ),
+        Row::ClockSeconds => (
+            "Show Seconds",
+            if persistence::get_bool(s, "appearance.clock_show_seconds", false) { "Yes".into() } else { "No".into() },
+        ),
+        Row::Dashboard => ("Default Dashboard", persistence::get_str(s, "default_dashboard", "Dashboard-1")),
+        Row::Border => ("Border Style", persistence::get_str(s, "appearance.border_style", "Rounded")),
+        Row::StatusBar => ("Status Bar", enabled(persistence::get_bool(s, "appearance.status_bar_enabled", false))),
+        Row::NewWindow => (
+            "New Window Apps",
+            if persistence::get_bool(s, "appearance.new_window_keeps_tuios_open", false) {
+                "Keep tuiOS open".into()
+            } else {
+                "Close tuiOS while running".into()
+            },
+        ),
+        Row::NavBar => ("Navigation Bar", persistence::get_str(s, "appearance.navbar_position", "Top")),
+        Row::Intro => ("Intro Animation", enabled(persistence::get_bool(s, "appearance.intro_animation_enabled", true))),
+        Row::BootStyle => ("Boot Animation", boot_style(s)),
+        Row::BootColour => ("└ Boot Colour", boot_colour(s)),
+        Row::BootLogo => ("└ Boot Logo", boot_logo(s)),
+    }
+}
+
+fn enabled(on: bool) -> String {
+    if on { "Enabled".into() } else { "Disabled".into() }
+}
+
 pub fn render(frame: &mut Frame, area: Rect, cursor: usize, _scroll: usize, editing: bool) {
     let settings = persistence::load();
-    let accent = persistence::get_str(&settings, "appearance.accent_color", "Cyan");
-    let clock_on = persistence::get_bool(&settings, "appearance.clock_enabled", false);
-    let clock_24h = persistence::get_bool(&settings, "appearance.clock_format_24h", true);
-    let clock_secs = persistence::get_bool(&settings, "appearance.clock_show_seconds", false);
-    let default_dash = persistence::get_str(&settings, "default_dashboard", "Dashboard-1");
-    let border_style = persistence::get_str(&settings, "appearance.border_style", "Rounded");
-    let status_bar = persistence::get_bool(&settings, "appearance.status_bar_enabled", false);
-    let keep_open = persistence::get_bool(&settings, "appearance.new_window_keeps_tuios_open", false);
-    let navbar_bottom = persistence::get_str(&settings, "appearance.navbar_position", "Top") == "Bottom";
-    let intro_on = persistence::get_bool(&settings, "appearance.intro_animation_enabled", true);
-    let boot_style = persistence::get_str(&settings, "appearance.boot_animation_style", "Modern");
-
-    let items: Vec<(&str, String)> = vec![
-        ("tuiOS Colour", accent),
-        ("Clock", if clock_on { "Enabled".into() } else { "Disabled".into() }),
-        ("Clock Format", if clock_24h { "24 hour".into() } else { "12 hour".into() }),
-        ("Show Seconds", if clock_secs { "Yes".into() } else { "No".into() }),
-        ("Default Dashboard", default_dash),
-        ("Border Style", border_style),
-        ("Status Bar", if status_bar { "Enabled".into() } else { "Disabled".into() }),
-        (
-            "New Window Apps",
-            if keep_open { "Keep tuiOS open".into() } else { "Close tuiOS while running".into() },
-        ),
-        ("Navigation Bar", if navbar_bottom { "Bottom".into() } else { "Top".into() }),
-        ("Intro Animation", if intro_on { "Enabled".into() } else { "Disabled".into() }),
-        ("Boot Animation", boot_style),
-    ];
 
     let value_style = Style::default().fg(Color::White);
     let mut lines: Vec<Line> = Vec::new();
-    for (i, (label, value)) in items.iter().enumerate() {
+    for (i, row) in rows(&settings).iter().enumerate() {
+        let (label, value) = label_value(*row, &settings);
         let is_active = i == cursor;
         let prefix = if is_active { "  » " } else { "    " };
         let style = if is_active {
@@ -116,11 +217,11 @@ pub fn render(frame: &mut Frame, area: Rect, cursor: usize, _scroll: usize, edit
             value_style
         };
         // For multi-option items in edit mode, show ◄ value ►
-        if is_active && editing && is_edit_mode_item(i) {
+        if is_active && editing && row.cycles() {
             lines.push(Line::from(vec![
                 Span::styled(format!("{}{:<22}", prefix, label), style),
                 Span::styled("  ◄ ", Style::default().fg(Color::Yellow)),
-                Span::styled(value.as_str(), Style::default().fg(Color::White)),
+                Span::styled(value, Style::default().fg(Color::White)),
                 Span::styled(" ►", Style::default().fg(Color::Yellow)),
             ]));
         } else {
@@ -134,27 +235,29 @@ pub fn render(frame: &mut Frame, area: Rect, cursor: usize, _scroll: usize, edit
     frame.render_widget(Paragraph::new(lines), area);
 }
 
-/// Returns true for items that use left/right cycling (more than 2 options).
+/// Returns true for items that use left/right cycling.
 pub fn is_edit_mode_item(cursor: usize) -> bool {
-    matches!(cursor, 0 | 4 | 5 | 10) // tuiOS Colour, Default Dashboard, Border Style, Boot Animation
+    row_at(&persistence::load(), cursor).map_or(false, |row| row.cycles())
 }
 
-pub fn item_count() -> usize { 11 }
+pub fn item_count() -> usize {
+    rows(&persistence::load()).len()
+}
 
 /// Cycle a multi-option item forward (+1) or backward (-1).
 pub fn handle_cycle(cursor: usize, forward: bool) {
     let mut settings = persistence::load();
-    match cursor {
-        0 => {
+    let row = match row_at(&settings, cursor) {
+        Some(row) => row,
+        None => return,
+    };
+    match row {
+        Row::Accent => {
             let current = persistence::get_str(&settings, "appearance.accent_color", "Cyan");
-            let idx = ACCENT_COLORS.iter().position(|&c| c == current).unwrap_or(0);
-            let len = ACCENT_COLORS.len();
-            let next_idx = if forward { (idx + 1) % len } else { (idx + len - 1) % len };
-            let next = ACCENT_COLORS[next_idx];
-            persistence::set(&mut settings, "appearance.accent_color", serde_json::Value::String(next.to_string()));
+            let next = cycle_option(&mut settings, "appearance.accent_color", ACCENT_COLORS, &current, forward);
             crate::utilities::logging::settings(&format!("tuiOS Colour changed to {}", next));
         }
-        4 => {
+        Row::Dashboard => {
             let dash_names = persistence::load_dashboard_names();
             if !dash_names.is_empty() {
                 let current = persistence::get_str(&settings, "default_dashboard", "Dashboard-1");
@@ -166,23 +269,25 @@ pub fn handle_cycle(cursor: usize, forward: bool) {
                 crate::utilities::logging::settings(&format!("Default dashboard changed to {}", next));
             }
         }
-        5 => {
+        Row::Border => {
             let current = persistence::get_str(&settings, "appearance.border_style", "Rounded");
-            let idx = BORDER_STYLES.iter().position(|&b| b == current).unwrap_or(0);
-            let len = BORDER_STYLES.len();
-            let next_idx = if forward { (idx + 1) % len } else { (idx + len - 1) % len };
-            let next = BORDER_STYLES[next_idx];
-            persistence::set(&mut settings, "appearance.border_style", serde_json::Value::String(next.to_string()));
+            let next = cycle_option(&mut settings, "appearance.border_style", BORDER_STYLES, &current, forward);
             crate::utilities::logging::settings(&format!("Border style changed to {}", next));
         }
-        10 => {
-            let current = persistence::get_str(&settings, "appearance.boot_animation_style", "Modern");
-            let idx = BOOT_STYLES.iter().position(|&b| b == current).unwrap_or(0);
-            let len = BOOT_STYLES.len();
-            let next_idx = if forward { (idx + 1) % len } else { (idx + len - 1) % len };
-            let next = BOOT_STYLES[next_idx];
-            persistence::set(&mut settings, "appearance.boot_animation_style", serde_json::Value::String(next.to_string()));
+        Row::BootStyle => {
+            let current = boot_style(&settings);
+            let next = cycle_option(&mut settings, "appearance.boot_animation_style", BOOT_STYLES, &current, forward);
             crate::utilities::logging::settings(&format!("Boot animation set to {}", next));
+        }
+        Row::BootColour => {
+            let current = boot_colour(&settings);
+            let next = cycle_option(&mut settings, "appearance.boot_animation_colour", BOOT_COLOURS, &current, forward);
+            crate::utilities::logging::settings(&format!("Boot colour set to {}", next));
+        }
+        Row::BootLogo => {
+            let current = boot_logo(&settings);
+            let next = cycle_option(&mut settings, "appearance.boot_logo", BOOT_LOGOS, &current, forward);
+            crate::utilities::logging::settings(&format!("Boot logo set to {}", next));
         }
         _ => {}
     }
@@ -192,28 +297,32 @@ pub fn handle_cycle(cursor: usize, forward: bool) {
 /// Handle Enter for binary-toggle items (Clock, Clock Format, Show Seconds).
 pub fn handle_enter(cursor: usize) {
     let mut settings = persistence::load();
-    match cursor {
-        1 => {
+    let row = match row_at(&settings, cursor) {
+        Some(row) => row,
+        None => return,
+    };
+    match row {
+        Row::Clock => {
             let current = persistence::get_bool(&settings, "appearance.clock_enabled", false);
             persistence::set(&mut settings, "appearance.clock_enabled", serde_json::Value::Bool(!current));
             crate::utilities::logging::settings(&format!("Clock {}", if !current { "enabled" } else { "disabled" }));
         }
-        2 => {
+        Row::ClockFormat => {
             let current = persistence::get_bool(&settings, "appearance.clock_format_24h", true);
             persistence::set(&mut settings, "appearance.clock_format_24h", serde_json::Value::Bool(!current));
             crate::utilities::logging::settings(&format!("Clock format set to {}", if !current { "24h" } else { "12h" }));
         }
-        3 => {
+        Row::ClockSeconds => {
             let current = persistence::get_bool(&settings, "appearance.clock_show_seconds", false);
             persistence::set(&mut settings, "appearance.clock_show_seconds", serde_json::Value::Bool(!current));
             crate::utilities::logging::settings(&format!("Clock seconds {}", if !current { "shown" } else { "hidden" }));
         }
-        6 => {
+        Row::StatusBar => {
             let current = persistence::get_bool(&settings, "appearance.status_bar_enabled", false);
             persistence::set(&mut settings, "appearance.status_bar_enabled", serde_json::Value::Bool(!current));
             crate::utilities::logging::settings(&format!("Status bar {}", if !current { "enabled" } else { "disabled" }));
         }
-        7 => {
+        Row::NewWindow => {
             let current = persistence::get_bool(&settings, "appearance.new_window_keeps_tuios_open", false);
             persistence::set(&mut settings, "appearance.new_window_keeps_tuios_open", serde_json::Value::Bool(!current));
             crate::utilities::logging::settings(&format!(
@@ -221,13 +330,13 @@ pub fn handle_enter(cursor: usize) {
                 if !current { "tuiOS stays open" } else { "tuiOS closes while running" }
             ));
         }
-        8 => {
+        Row::NavBar => {
             let current = persistence::get_str(&settings, "appearance.navbar_position", "Top");
             let next = if current == "Bottom" { "Top" } else { "Bottom" };
             persistence::set(&mut settings, "appearance.navbar_position", serde_json::Value::String(next.to_string()));
             crate::utilities::logging::settings(&format!("Navigation bar moved to {}", next.to_lowercase()));
         }
-        9 => {
+        Row::Intro => {
             let current = persistence::get_bool(&settings, "appearance.intro_animation_enabled", true);
             persistence::set(&mut settings, "appearance.intro_animation_enabled", serde_json::Value::Bool(!current));
             crate::utilities::logging::settings(&format!("Intro animation {}", if !current { "enabled" } else { "disabled" }));
