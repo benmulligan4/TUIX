@@ -265,9 +265,10 @@ pub fn play<B: Backend>(
     Ok(())
 }
 
-/// In rainbow mode the bar and status text ride the same hue as the logo's left edge.
+/// Only the drifting rainbow takes over the bar and status text; the static one
+/// leaves them on the tuiOS colour.
 fn frame_accent(accent: Color, rainbow: Rainbow, tick: u64) -> Color {
-    if rainbow == Rainbow::Off {
+    if rainbow != Rainbow::Dynamic {
         return accent;
     }
     let (r, g, b) = hue_to_rgb(rainbow.phase(tick));
@@ -382,6 +383,7 @@ fn render(
         },
     );
 }
+
 
 
 
