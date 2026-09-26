@@ -30,23 +30,32 @@ const DURATION_MS: u64 = 2600;
 const FRAME_MS: u64 = 33;
 const HOLD_MS: u64 = 600;
 
+/// Boot animation choices from Settings → Appearance.
+pub struct Options<'a> {
+    pub style: &'a str,
+    pub colour: &'a str,
+    pub logo: &'a str,
+    pub reveal: &'a str,
+}
+
 /// Play the intro animation in the configured style. Returns early if the user
 /// presses a key.
 pub fn play<B: Backend>(
     terminal: &mut Terminal<B>,
     accent: Color,
-    style: &str,
-    colour: &str,
-    logo: &str,
+    options: Options<'_>,
 ) -> io::Result<()> {
-    if style.eq_ignore_ascii_case("Retro") {
+    if options.style.eq_ignore_ascii_case("Retro") {
         retro::play(terminal, accent)
     } else {
         modern::play(
             terminal,
             accent,
-            modern::Rainbow::from_name(colour),
-            modern::Logo::from_name(logo),
+            modern::Look {
+                rainbow: modern::Rainbow::from_name(options.colour),
+                logo: modern::Logo::from_name(options.logo),
+                reveal: modern::Reveal::from_name(options.reveal),
+            },
         )
     }
 }

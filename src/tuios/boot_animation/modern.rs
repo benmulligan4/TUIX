@@ -45,6 +45,11 @@ const RAINBOW_SPAN: f32 = 300.0;
 /// Degrees of hue the rainbow tint drifts per millisecond.
 const RAINBOW_DRIFT: f32 = 0.12;
 
+/// How long a directional wipe takes to cross the logo.
+const WIPE_MS: u64 = 900;
+/// Fraction of the logo the wipe's soft leading edge covers.
+const WIPE_FEATHER: f32 = 0.3;
+
 /// How the logo and loading bar are coloured.
 #[derive(Clone, Copy, PartialEq)]
 pub enum Rainbow {
@@ -96,6 +101,48 @@ impl Logo {
             Self::Static => LOGO_STATIC,
         }
     }
+}
+
+/// Edge the logo appears from.
+#[derive(Clone, Copy, PartialEq)]
+pub enum Reveal {
+    /// The widget's own blur-in, with no direction to it.
+    Center,
+    Up,
+    Down,
+    Left,
+    Right,
+}
+
+impl Reveal {
+    pub fn from_name(name: &str) -> Self {
+        match name.to_ascii_lowercase().as_str() {
+            "up" => Self::Up,
+            "down" => Self::Down,
+            "left" => Self::Left,
+            "right" => Self::Right,
+            _ => Self::Center,
+        }
+    }
+
+    /// How far along the wipe a pixel sits, 0 at the edge it starts from.
+    fn distance(self, x: u32, y: u32, width: f32, height: f32) -> f32 {
+        match self {
+            Self::Up => y as f32 / height,
+            Self::Down => 1.0 - y as f32 / height,
+            Self::Left => x as f32 / width,
+            Self::Right => 1.0 - x as f32 / width,
+            Self::Center => 0.0,
+        }
+    }
+}
+
+/// Resolved look of the modern intro.
+#[derive(Clone, Copy)]
+pub struct Look {
+    pub rainbow: Rainbow,
+    pub logo: Logo,
+    pub reveal: Reveal,
 }
 
 /// The logo plus the cell box it was built for.
@@ -170,20 +217,55 @@ fn rainbow_tint(cells: &RgbImage, phase: f32) -> RgbImage {
     out
 }
 
-/// Drift the tint once the blur-in has finished — a one-step screen paints at
-/// full colour on its first render, so the reveal is not restarted.
-fn drift_tint(splash: &mut Splash, phase: f32) {
-    if !splash.screen.is_rendered() {
+/// Sweep the mark in from one edge, dimming what the wipe has not reached yet.
+fn wipe(mut cells: RgbImage, reveal: Reveal, progress: f32) -> RgbImage {
+    let width = cells.width().max(1) as f32;
+    let height = cells.height().max(1) as f32;
+    // Run the edge past the far side so the last pixels reach full brightness
+    let edge = progress * (1.0 + WIPE_FEATHER);
+    for (x, y, px) in cells.enumerate_pixels_mut() {
+        let lit = ((edge - reveal.distance(x, y, width, height)) / WIPE_FEATHER).clamp(0.0, 1.0);
+        let scale = (lit * 255.0) as u32;
+        *px = Rgb([
+            (px[0] as u32 * scale / 255) as u8,
+            (px[1] as u32 * scale / 255) as u8,
+            (px[2] as u32 * scale / 255) as u8,
+        ]);
+    }
+    cells
+}
+
+/// The logo as it should look this frame, before it is handed to the widget.
+fn frame_image(cells: &RgbImage, look: Look, tick: u64) -> RgbImage {
+    let tinted = if look.rainbow == Rainbow::Off {
+        cells.clone()
+    } else {
+        rainbow_tint(cells, look.rainbow.phase(tick))
+    };
+    if look.reveal == Reveal::Center {
+        tinted
+    } else {
+        wipe(tinted, look.reveal, (tick as f32 / WIPE_MS as f32).min(1.0))
+    }
+}
+
+/// Rebuild the splash when the wipe or the tint has moved on. A one-step screen
+/// paints at full colour on its first render, so the reveal is not restarted.
+fn update(splash: &mut Splash, look: Look, tick: u64) {
+    let wiping = look.reveal != Reveal::Center && tick <= WIPE_MS;
+    let drifting = look.rainbow == Rainbow::Dynamic && splash.screen.is_rendered();
+    if !wiping && !drifting {
         return;
     }
-    if let Some(screen) = splash_screen(&rainbow_tint(&splash.cells, phase), 1) {
+    if let Some(screen) = splash_screen(&frame_image(&splash.cells, look, tick), 1) {
         splash.screen = screen;
     }
 }
 
 /// Fit the logo to the screen at its own aspect, leaving room for the text below.
-fn splash(width: u16, height: u16, rainbow: Rainbow, logo: Logo) -> Option<Splash> {
-    let logo = trim_padding(image::load_from_memory_with_format(logo.bytes(), ImageFormat::Png).ok()?);
+fn splash(width: u16, height: u16, look: Look) -> Option<Splash> {
+    let logo =
+        trim_padding(image::load_from_memory_with_format(look.logo.bytes(), ImageFormat::Png).ok()?);
     let (px_w, px_h) = (logo.width().max(1), logo.height().max(1));
 
     let room_w = (width as u32 * SPLASH_WIDTH_PCT / 100).min(SPLASH_MAX_W as u32);
@@ -194,12 +276,10 @@ fn splash(width: u16, height: u16, rainbow: Rainbow, logo: Logo) -> Option<Splas
         return None;
     }
 
+    // A directional wipe does the revealing itself, so the widget paints in one step
+    let steps = if look.reveal == Reveal::Center { SPLASH_STEPS } else { 1 };
     let cells = cell_image(&logo, cells_w, cells_h);
-    let screen = if rainbow == Rainbow::Off {
-        splash_screen(&cells, SPLASH_STEPS)?
-    } else {
-        splash_screen(&rainbow_tint(&cells, 0.0), SPLASH_STEPS)?
-    };
+    let screen = splash_screen(&frame_image(&cells, look, 0), steps)?;
     Some(Splash {
         screen,
         cells,
@@ -209,17 +289,12 @@ fn splash(width: u16, height: u16, rainbow: Rainbow, logo: Logo) -> Option<Splas
 }
 
 /// Play the intro animation. Returns early if the user presses a key.
-pub fn play<B: Backend>(
-    terminal: &mut Terminal<B>,
-    accent: Color,
-    rainbow: Rainbow,
-    logo: Logo,
-) -> io::Result<()> {
+pub fn play<B: Backend>(terminal: &mut Terminal<B>, accent: Color, look: Look) -> io::Result<()> {
     let start = Instant::now();
     let total = Duration::from_millis(DURATION_MS);
 
     let size = terminal.size()?;
-    let mut splash = splash(size.width, size.height, rainbow, logo);
+    let mut splash = splash(size.width, size.height, look);
 
     loop {
         let elapsed = start.elapsed();
@@ -228,11 +303,9 @@ pub fn play<B: Backend>(
         }
         let tick = elapsed.as_millis() as u64;
         let progress = eased(tick as f64 / DURATION_MS as f64);
-        let accent = frame_accent(accent, rainbow, tick);
-        if rainbow == Rainbow::Dynamic {
-            if let Some(splash) = splash.as_mut() {
-                drift_tint(splash, rainbow.phase(tick));
-            }
+        let accent = frame_accent(accent, look.rainbow, tick);
+        if let Some(splash) = splash.as_mut() {
+            update(splash, look, tick);
         }
 
         terminal.draw(|frame| render(frame, splash.as_mut(), progress, tick, accent, false))?;
@@ -250,11 +323,9 @@ pub fn play<B: Backend>(
             break;
         }
         let tick = DURATION_MS + elapsed.as_millis() as u64;
-        let accent = frame_accent(accent, rainbow, tick);
-        if rainbow == Rainbow::Dynamic {
-            if let Some(splash) = splash.as_mut() {
-                drift_tint(splash, rainbow.phase(tick));
-            }
+        let accent = frame_accent(accent, look.rainbow, tick);
+        if let Some(splash) = splash.as_mut() {
+            update(splash, look, tick);
         }
         terminal.draw(|frame| render(frame, splash.as_mut(), 1.0, tick, accent, true))?;
         if skip_requested()? {
@@ -383,6 +454,7 @@ fn render(
         },
     );
 }
+
 
 
 

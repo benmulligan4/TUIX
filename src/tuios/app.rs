@@ -2737,7 +2737,17 @@ fn run_app() -> bool {
             let style = settings::pages::appearance::boot_style(&s);
             let colour = settings::pages::appearance::boot_colour(&s);
             let logo = settings::pages::appearance::boot_logo(&s);
-            let _ = boot_animation::play(&mut terminal, accent, &style, &colour, &logo);
+            let reveal = settings::pages::appearance::boot_reveal(&s);
+            let _ = boot_animation::play(
+                &mut terminal,
+                accent,
+                boot_animation::Options {
+                    style: &style,
+                    colour: &colour,
+                    logo: &logo,
+                    reveal: &reveal,
+                },
+            );
         }
     }
 

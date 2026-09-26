@@ -22,6 +22,7 @@ const BORDER_STYLES: &[&str] = &["Rounded", "Single", "Double", "None"];
 const BOOT_STYLES: &[&str] = &["Modern", "Retro"];
 const BOOT_COLOURS: &[&str] = &["Default", "Rainbow Dynamic", "Rainbow Static"];
 const BOOT_LOGOS: &[&str] = &["Static", "Faded"];
+const BOOT_REVEALS: &[&str] = &["Center", "Up", "Down", "Left", "Right"];
 
 /// Rows in display order. The colour and logo rows only apply to the modern
 /// intro, so they are hidden while Retro is selected.
@@ -40,6 +41,7 @@ enum Row {
     BootStyle,
     BootColour,
     BootLogo,
+    BootReveal,
 }
 
 impl Row {
@@ -53,6 +55,7 @@ impl Row {
                 | Row::BootStyle
                 | Row::BootColour
                 | Row::BootLogo
+                | Row::BootReveal
         )
     }
 }
@@ -74,6 +77,7 @@ fn rows(settings: &Value) -> Vec<Row> {
     if boot_style(settings) == "Modern" {
         rows.push(Row::BootColour);
         rows.push(Row::BootLogo);
+        rows.push(Row::BootReveal);
     }
     rows
 }
@@ -101,6 +105,11 @@ pub fn boot_colour(settings: &Value) -> String {
 pub fn boot_logo(settings: &Value) -> String {
     let stored = persistence::get_str(settings, "appearance.boot_logo", "Static");
     if BOOT_LOGOS.contains(&stored.as_str()) { stored } else { "Static".into() }
+}
+
+pub fn boot_reveal(settings: &Value) -> String {
+    let stored = persistence::get_str(settings, "appearance.boot_reveal", "Center");
+    if BOOT_REVEALS.contains(&stored.as_str()) { stored } else { "Center".into() }
 }
 
 /// Step to the next option in a fixed list and store it.
@@ -195,6 +204,7 @@ fn label_value(row: Row, s: &Value) -> (&'static str, String) {
         Row::BootStyle => ("Boot Animation", boot_style(s)),
         Row::BootColour => ("└ Boot Colour", boot_colour(s)),
         Row::BootLogo => ("└ Boot Logo", boot_logo(s)),
+        Row::BootReveal => ("└ Boot Direction", boot_reveal(s)),
     }
 }
 
@@ -288,6 +298,11 @@ pub fn handle_cycle(cursor: usize, forward: bool) {
             let current = boot_logo(&settings);
             let next = cycle_option(&mut settings, "appearance.boot_logo", BOOT_LOGOS, &current, forward);
             crate::utilities::logging::settings(&format!("Boot logo set to {}", next));
+        }
+        Row::BootReveal => {
+            let current = boot_reveal(&settings);
+            let next = cycle_option(&mut settings, "appearance.boot_reveal", BOOT_REVEALS, &current, forward);
+            crate::utilities::logging::settings(&format!("Boot direction set to {}", next));
         }
         _ => {}
     }
